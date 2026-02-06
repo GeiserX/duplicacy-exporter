@@ -1,0 +1,30 @@
+# Example: deploy alongside your Duplicacy CLI container
+services:
+  duplicacy-exporter:
+    build: .
+    # image: ghcr.io/geiserx/duplicacy-exporter:0.1.0  # or your private registry
+    container_name: duplicacy-exporter
+    restart: unless-stopped
+    environment:
+      # --- Mode selection (log_tail or webhook) ---
+      - MODE=log_tail
+
+      # --- log_tail mode settings ---
+      # Container whose logs to tail (requires Docker socket)
+      - DOCKER_CONTAINER_NAME=duplicacy-cli-cron
+      # Alternative: tail a log file instead of Docker logs
+      # - LOG_FILE=/logs/duplicacy.log
+
+      # --- webhook mode settings ---
+      # Set MODE=webhook to receive Duplicacy Web UI report_url POSTs
+      # - WEBHOOK_PATH=/webhook
+
+      # --- General ---
+      - LISTEN_PORT=9750
+      - LOG_LEVEL=INFO
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # If using LOG_FILE mode, mount the log directory:
+      # - /path/to/duplicacy/logs:/logs:ro
+    ports:
+      - "9750:9750"
