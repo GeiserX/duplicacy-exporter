@@ -1,0 +1,9 @@
+.git
+.gitignore
+.editorconfig
+*.md
+LICENSE
+docker-compose.yml
+.github
+__pycache__
+*.pyc
