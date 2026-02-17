@@ -524,25 +524,57 @@ class MetricsHTTPHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 def tail_docker_logs(state: BackupState, container_name: str):
-    """Tail Docker container logs via the Docker SDK."""
-    import docker
+    """Tail Docker container logs via the Docker Engine API over Unix socket.
 
-    client = docker.from_env()
-    logger.info("Connecting to Docker container: %s", container_name)
+    Uses only Python stdlib (no docker SDK) to minimise image size and RAM.
+    """
+    import http.client
+    import socket as _socket
+
+    class _UnixConn(http.client.HTTPConnection):
+        def __init__(self, sock_path):
+            super().__init__("localhost")
+            self._sock_path = sock_path
+
+        def connect(self):
+            self.sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+            self.sock.connect(self._sock_path)
+
+    sock_path = os.getenv("DOCKER_HOST", "/var/run/docker.sock")
+    logger.info("Tailing logs from container %s via %s", container_name, sock_path)
 
     while True:
         try:
-            container = client.containers.get(container_name)
-            logger.info("Tailing logs from container %s", container_name)
-            # Stream logs from now (follow mode)
-            for log_bytes in container.logs(stream=True, follow=True, since=int(time.time())):
-                line = log_bytes.decode("utf-8", errors="replace").rstrip("\n")
-                for subline in line.split("\n"):
-                    state.process_line(subline)
-        except Exception as exc:
-            logger.warning(
-                "Docker log tail error (will retry in 10s): %s", exc
+            conn = _UnixConn(sock_path)
+            since = int(time.time())
+            conn.request(
+                "GET",
+                f"/containers/{container_name}/logs"
+                f"?follow=true&stdout=true&stderr=true&since={since}",
             )
+            resp = conn.getresponse()
+            if resp.status != 200:
+                body = resp.read().decode(errors="replace")
+                raise RuntimeError(f"Docker API {resp.status}: {body}")
+
+            buf = b""
+            while True:
+                chunk = resp.read(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                while len(buf) >= 8:
+                    frame_size = int.from_bytes(buf[4:8], "big")
+                    total = 8 + frame_size
+                    if len(buf) < total:
+                        break
+                    payload = buf[8:total].decode("utf-8", errors="replace")
+                    buf = buf[total:]
+                    for subline in payload.rstrip("\n").split("\n"):
+                        if subline:
+                            state.process_line(subline)
+        except Exception as exc:
+            logger.warning("Docker log tail error (will retry in 10s): %s", exc)
             time.sleep(10)
 
 
