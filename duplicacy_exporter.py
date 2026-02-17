@@ -559,7 +559,7 @@ def tail_docker_logs(state: BackupState, container_name: str):
 
             buf = b""
             while True:
-                chunk = resp.read(4096)
+                chunk = resp.read1(4096)
                 if not chunk:
                     break
                 buf += chunk
