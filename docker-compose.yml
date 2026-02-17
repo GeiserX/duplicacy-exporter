@@ -2,7 +2,7 @@
 services:
   duplicacy-exporter:
     build: .
-    # image: ghcr.io/geiserx/duplicacy-exporter:0.1.0  # or your private registry
+    # image: ghcr.io/geiserx/duplicacy-exporter:0.2.0  # or your private registry
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
