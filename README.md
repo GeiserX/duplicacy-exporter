@@ -48,7 +48,8 @@ Supports both **Duplicacy CLI** (log tailing) and **Duplicacy Web UI** (webhook)
 | `duplicacy_prune_running` | Gauge | 1 if prune is in progress |
 | `duplicacy_prune_last_success_timestamp_seconds` | Gauge | Unix timestamp of last prune |
 
-All metrics carry labels: `snapshot_id`, `storage_name`, `machine`.
+Backup metrics carry labels: `snapshot_id`, `storage_target`, `machine`.
+Prune metrics carry labels: `storage_target`, `machine`.
 
 ## Quick Start
 
@@ -119,6 +120,8 @@ services:
 | `LISTEN_PORT` | `9750` | Port for metrics and webhook HTTP server |
 | `WEBHOOK_PATH` | `/webhook` | Path for webhook POST endpoint |
 | `MACHINE_NAME` | _(empty)_ | Machine name label (auto-detected from logs) |
+| `TAILSCALE_DOMAIN` | `mango-alpha.ts.net` | Tailscale domain to strip from storage URLs |
+| `STORAGE_HOST_MAP` | _(empty)_ | JSON mapping hostname/IP to display name (e.g. `{"192.168.10.100":"watchtower"}`) |
 | `LOG_LEVEL` | `INFO` | Logging level: DEBUG, INFO, WARNING, ERROR |
 
 ## Prometheus Configuration
