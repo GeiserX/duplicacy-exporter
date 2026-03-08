@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 200" width="900" height="200">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E6522C"/>
+      <stop offset="100%" stop-color="#1A1A2E"/>
+    </linearGradient>
+    <linearGradient id="chartGlow" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#E6522C" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#E6522C" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="200" rx="12" fill="url(#bg)"/>
+
+  <!-- Subtle grid pattern -->
+  <g stroke="#ffffff" stroke-opacity="0.04" stroke-width="1">
+    <line x1="0" y1="50" x2="900" y2="50"/>
+    <line x1="0" y1="100" x2="900" y2="100"/>
+    <line x1="0" y1="150" x2="900" y2="150"/>
+    <line x1="150" y1="0" x2="150" y2="200"/>
+    <line x1="300" y1="0" x2="300" y2="200"/>
+    <line x1="450" y1="0" x2="450" y2="200"/>
+    <line x1="600" y1="0" x2="600" y2="200"/>
+    <line x1="750" y1="0" x2="750" y2="200"/>
+  </g>
+
+  <!-- Metrics chart icon (left side) -->
+  <g transform="translate(80, 55)">
+    <!-- Chart axes -->
+    <line x1="0" y1="90" x2="100" y2="90" stroke="#ffffff" stroke-width="2" stroke-opacity="0.6"/>
+    <line x1="0" y1="0" x2="0" y2="90" stroke="#ffffff" stroke-width="2" stroke-opacity="0.6"/>
+
+    <!-- Chart area fill -->
+    <path d="M 10,75 L 30,55 L 50,60 L 70,25 L 90,15 L 90,90 L 10,90 Z" fill="url(#chartGlow)"/>
+
+    <!-- Chart line -->
+    <polyline points="10,75 30,55 50,60 70,25 90,15" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Data points -->
+    <circle cx="10" cy="75" r="3" fill="#ffffff"/>
+    <circle cx="30" cy="55" r="3" fill="#ffffff"/>
+    <circle cx="50" cy="60" r="3" fill="#ffffff"/>
+    <circle cx="70" cy="25" r="3" fill="#ffffff"/>
+    <circle cx="90" cy="15" r="4" fill="#ffffff"/>
+  </g>
+
+  <!-- Title text -->
+  <text x="240" y="108" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="48" font-weight="700" fill="#ffffff" letter-spacing="-1">
+    duplicacy-exporter
+  </text>
+
+  <!-- Subtitle -->
+  <text x="242" y="138" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="16" fill="#ffffff" fill-opacity="0.7" letter-spacing="0.5">
+    Prometheus metrics for Duplicacy backups
+  </text>
+
+  <!-- Decorative metric bars (right side) -->
+  <g transform="translate(780, 50)">
+    <rect x="0" y="0" width="8" height="100" rx="4" fill="#ffffff" fill-opacity="0.1"/>
+    <rect x="0" y="30" width="8" height="70" rx="4" fill="#ffffff" fill-opacity="0.4"/>
+
+    <rect x="20" y="0" width="8" height="100" rx="4" fill="#ffffff" fill-opacity="0.1"/>
+    <rect x="20" y="50" width="8" height="50" rx="4" fill="#ffffff" fill-opacity="0.4"/>
+
+    <rect x="40" y="0" width="8" height="100" rx="4" fill="#ffffff" fill-opacity="0.1"/>
+    <rect x="40" y="15" width="8" height="85" rx="4" fill="#ffffff" fill-opacity="0.4"/>
+
+    <rect x="60" y="0" width="8" height="100" rx="4" fill="#ffffff" fill-opacity="0.1"/>
+    <rect x="60" y="40" width="8" height="60" rx="4" fill="#ffffff" fill-opacity="0.4"/>
+  </g>
+</svg>
