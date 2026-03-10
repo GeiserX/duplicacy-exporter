@@ -1,5 +1,5 @@
 """
-Duplicacy Prometheus Exporter v0.3.0
+Duplicacy Prometheus Exporter v0.3.1
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 
@@ -15,6 +15,7 @@ import re
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from prometheus_client import (
@@ -26,7 +27,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.3.0"
+VERSION = "0.3.3"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -40,6 +41,7 @@ LOG_FILE = os.getenv("LOG_FILE", "")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 MACHINE_NAME = os.getenv("MACHINE_NAME", "")
 TAILSCALE_DOMAIN = os.getenv("TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+REPLAY_HOURS = int(os.getenv("REPLAY_HOURS", "25"))
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -257,6 +259,23 @@ _PRUNE_COMPLETION_PATTERNS = [
 ]
 
 
+def _parse_docker_timestamp(line: str) -> tuple[float, str]:
+    """Parse RFC3339Nano timestamp prefix from Docker log lines (timestamps=true).
+
+    Returns (unix_ts, stripped_line). If no timestamp found, returns (0, original_line).
+    Docker format: ``2006-01-02T15:04:05.999999999Z <log content>``
+    """
+    if len(line) < 20 or line[4] != '-':
+        return 0.0, line
+    try:
+        space = line.index(' ')
+        ts_str = line[:space]
+        dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        return dt.timestamp(), line[space + 1:]
+    except (ValueError, IndexError):
+        return 0.0, line
+
+
 def _parse_size(value_str: str, unit: str) -> float:
     value = float(value_str.replace(",", ""))
     multipliers = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3}
@@ -296,6 +315,7 @@ class BackupState:
         self.in_prune = False
         self.uploaded_count = 0
         self.skipped_count = 0
+        self._log_time = 0.0
 
     def _backup_labels(self) -> tuple | None:
         sid = self.current_snapshot
@@ -312,6 +332,18 @@ class BackupState:
             return None
         return (tgt, mach)
 
+    def _end_active_backup(self):
+        """End backup on section transition (interleaved logs from concurrent runs)."""
+        if self.in_backup:
+            bl = self._backup_labels()
+            if bl:
+                logger.warning("Closing active backup %s -> %s (new section arrived before completion)",
+                               bl[0], bl[1])
+                backup_running.labels(*bl).set(0)
+                backup_speed_bps.labels(*bl).set(0)
+                backup_progress.labels(*bl).set(0)
+        self.in_backup = False
+
     def _end_active_prune(self):
         """End prune section on transition (sets running=0 but not success ts)."""
         if self.in_prune:
@@ -320,11 +352,12 @@ class BackupState:
                 prune_running.labels(*pl).set(0)
         self.in_prune = False
 
-    def process_line(self, line: str):
+    def process_line(self, line: str, log_time: float = 0.0):
         line = line.strip()
         if not line:
             return
         with self.lock:
+            self._log_time = log_time or time.time()
             self._process_line_inner(line)
 
     def _process_line_inner(self, line: str):
@@ -353,6 +386,7 @@ class BackupState:
             storage_name = header.group("storage") or ""
 
             if sec_type == "backup":
+                self._end_active_backup()
                 self._end_active_prune()
 
                 self.in_backup = True
@@ -371,14 +405,8 @@ class BackupState:
                             direction, storage_name, self.current_snapshot)
 
             elif sec_type == "prune":
+                self._end_active_backup()
                 self._end_active_prune()
-
-                if self.in_backup:
-                    bl = self._backup_labels()
-                    if bl:
-                        backup_running.labels(*bl).set(0)
-                        backup_speed_bps.labels(*bl).set(0)
-                    self.in_backup = False
 
                 self.in_prune = True
                 self.current_storage_target = ""
@@ -441,7 +469,7 @@ class BackupState:
             backup_running.labels(*bl).set(0)
             backup_progress.labels(*bl).set(1.0)
             backup_speed_bps.labels(*bl).set(0)
-            last_success_ts.labels(*bl).set(time.time())
+            last_success_ts.labels(*bl).set(self._log_time)
             last_exit_code.labels(*bl).set(0)
             last_revision.labels(*bl).set(revision)
             self.in_backup = False
@@ -503,7 +531,7 @@ class BackupState:
                 pl = self._prune_labels()
                 if pl:
                     prune_running.labels(*pl).set(0)
-                    last_prune_success_ts.labels(*pl).set(time.time())
+                    last_prune_success_ts.labels(*pl).set(self._log_time)
                 self.in_prune = False
                 logger.info("Prune completed: %s", pl)
                 return
@@ -638,14 +666,16 @@ def tail_docker_logs(state: BackupState, container_name: str):
     sock_path = os.getenv("DOCKER_HOST", "/var/run/docker.sock")
     logger.info("Tailing logs from container %s via %s", container_name, sock_path)
 
+    since = int(time.time()) - (REPLAY_HOURS * 3600)
+    logger.info("Replaying logs from last %dh (since %d)", REPLAY_HOURS, since)
+
     while True:
         try:
             conn = _UnixConn(sock_path)
-            since = int(time.time())
             conn.request(
                 "GET",
                 f"/containers/{container_name}/logs"
-                f"?follow=true&stdout=true&stderr=true&since={since}",
+                f"?follow=true&stdout=true&stderr=true&timestamps=true&since={since}",
             )
             resp = conn.getresponse()
             if resp.status != 200:
@@ -667,10 +697,14 @@ def tail_docker_logs(state: BackupState, container_name: str):
                     buf = buf[total:]
                     for subline in payload.rstrip("\n").split("\n"):
                         if subline:
-                            state.process_line(subline)
+                            log_ts, clean_line = _parse_docker_timestamp(subline)
+                            state.process_line(clean_line, log_time=log_ts)
+
+            since = int(time.time())
         except Exception as exc:
             logger.warning("Docker log tail error (will retry in 10s): %s", exc)
             time.sleep(10)
+            since = int(time.time()) - 60
 
 
 # ---------------------------------------------------------------------------
