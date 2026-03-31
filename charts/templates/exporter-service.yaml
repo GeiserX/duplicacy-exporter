@@ -1,0 +1,18 @@
+{{- if .Values.exporter.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "duplicacy.fullname" . }}-exporter
+  labels:
+    {{- include "duplicacy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: exporter
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.exporter.port }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "duplicacy.exporter.selectorLabels" . | nindent 4 }}
+{{- end }}

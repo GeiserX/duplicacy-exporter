@@ -1,0 +1,17 @@
+{{- if .Values.sharedLogs.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "duplicacy.fullname" . }}-logs
+  labels:
+    {{- include "duplicacy.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.sharedLogs.accessModes | nindent 4 }}
+  {{- if .Values.sharedLogs.storageClass }}
+  storageClassName: {{ .Values.sharedLogs.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.sharedLogs.size }}
+{{- end }}

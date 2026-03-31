@@ -1,0 +1,36 @@
+Duplicacy has been deployed to your cluster.
+
+{{- if .Values.cron.enabled }}
+
+== Backup CronJob ==
+  Schedule: {{ .Values.cron.schedule }}
+  The CronJob "{{ include "duplicacy.fullname" . }}-cron" will run backups on the configured schedule.
+  View recent jobs:
+    kubectl get jobs -l app.kubernetes.io/component=cron -n {{ .Release.Namespace }}
+  View logs of the latest job:
+    kubectl logs -l job-name=$(kubectl get jobs -l app.kubernetes.io/component=cron -n {{ .Release.Namespace }} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}') -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if .Values.exporter.enabled }}
+
+== Prometheus Exporter ==
+  Metrics are exposed on port {{ .Values.exporter.port }}.
+  Access the metrics endpoint:
+    kubectl port-forward svc/{{ include "duplicacy.fullname" . }}-exporter {{ .Values.exporter.port }}:{{ .Values.exporter.port }} -n {{ .Release.Namespace }}
+    curl http://localhost:{{ .Values.exporter.port }}/metrics
+  Health check:
+    curl http://localhost:{{ .Values.exporter.port }}/health
+
+{{- if .Values.exporter.serviceMonitor.enabled }}
+  A ServiceMonitor has been created for Prometheus Operator auto-discovery.
+{{- else }}
+  To enable Prometheus Operator auto-discovery, set exporter.serviceMonitor.enabled=true.
+{{- end }}
+{{- end }}
+
+{{- if and .Values.cron.enabled .Values.exporter.enabled .Values.sharedLogs.enabled }}
+
+== Log Sharing ==
+  The CronJob writes logs to a shared PVC that the exporter reads via LOG_FILE mode.
+  PVC: {{ include "duplicacy.fullname" . }}-logs ({{ .Values.sharedLogs.size }})
+{{- end }}

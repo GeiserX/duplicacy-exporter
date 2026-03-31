@@ -1,0 +1,12 @@
+{{- if .Values.cron.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "duplicacy.fullname" . }}-config
+  labels:
+    {{- include "duplicacy.labels" . | nindent 4 }}
+data:
+  DUPLICACY_THREADS: {{ .Values.cron.threads | quote }}
+  DUPLICACY_MAX_RUNTIME_HOURS: {{ .Values.cron.maxRuntimeHours | quote }}
+  LOG_FILE: {{ .Values.cron.logFile | quote }}
+{{- end }}

@@ -1,0 +1,159 @@
+## Duplicacy Helm Chart - Combined CronJob + Exporter
+## https://github.com/GeiserX/duplicacy-cli-cron
+
+## -- Global settings
+nameOverride: ""
+fullnameOverride: ""
+
+## -- Service Account
+serviceAccount:
+  # -- Whether to create a ServiceAccount
+  create: true
+  # -- Annotations to add to the ServiceAccount
+  annotations: {}
+  # -- Override the ServiceAccount name (defaults to fullname)
+  name: ""
+
+## -- CronJob for duplicacy-cli-cron backups
+cron:
+  # -- Enable the backup CronJob
+  enabled: true
+  image:
+    repository: drumsergio/duplicacy-cli-cron
+    tag: "3.2.5.2"
+    pullPolicy: IfNotPresent
+  # -- Cron schedule expression
+  schedule: "0 2 * * *"
+  # -- Number of successful job history to keep
+  successfulJobsHistoryLimit: 3
+  # -- Number of failed job history to keep
+  failedJobsHistoryLimit: 3
+  # -- Restart policy for the Job pod
+  restartPolicy: OnFailure
+  # -- Concurrency policy (Allow, Forbid, Replace)
+  concurrencyPolicy: Forbid
+  # -- S3 storage configuration
+  storage:
+    # -- First S3 endpoint URL
+    endpoint1: ""
+    # -- Second S3 endpoint URL (optional, for multi-backend)
+    endpoint2: ""
+    # -- S3 bucket name
+    bucket: ""
+    # -- S3 region
+    region: ""
+  # -- Map of repository credentials. Each key produces env vars:
+  # -- DUPLICACY_<KEY>_S3_ID, DUPLICACY_<KEY>_S3_SECRET, DUPLICACY_<KEY>_PASSWORD
+  # -- Example:
+  # --   credentials:
+  # --     MYREPO:
+  # --       s3Id: "AKIAXXXXXXXX"
+  # --       s3Secret: "wJalrXXXXXXXX"
+  # --       password: "encryption-passphrase"
+  credentials: {}
+  # -- Number of backup threads
+  threads: 4
+  # -- Maximum runtime in hours before the job is killed
+  maxRuntimeHours: 71
+  # -- Shoutrrr notification URL (leave empty to disable)
+  notification:
+    shoutrrrUrl: ""
+  # -- Log file path inside the container (written to shared PVC)
+  logFile: /logs/duplicacy.log
+  # -- Additional environment variables for the CronJob
+  extraEnv: []
+  # -- Source volumes to back up. Each entry can be a hostPath or an existing PVC.
+  # -- Example:
+  # --   sourceVolumes:
+  # --     - name: data
+  # --       hostPath:
+  # --         path: /mnt/user/data
+  # --         type: Directory
+  # --     - name: photos
+  # --       persistentVolumeClaim:
+  # --         claimName: photos-pvc
+  sourceVolumes: []
+  # -- Extra volume mounts for the CronJob container
+  extraVolumeMounts: []
+  # -- Extra volumes for the CronJob pod
+  extraVolumes: []
+  # -- Node selector
+  nodeSelector: {}
+  # -- Tolerations
+  tolerations: []
+  # -- Affinity rules
+  affinity: {}
+  # -- Pod annotations
+  podAnnotations: {}
+  # -- Pod security context
+  podSecurityContext: {}
+  # -- Container security context
+  securityContext: {}
+  # -- Resource requests and limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+## -- Deployment for duplicacy-exporter (Prometheus metrics)
+exporter:
+  # -- Enable the Prometheus exporter Deployment
+  enabled: true
+  image:
+    repository: drumsergio/duplicacy-exporter
+    tag: "0.3.3"
+    pullPolicy: IfNotPresent
+  # -- Exporter mode (log_tail reads from shared log PVC)
+  mode: log_tail
+  # -- Metrics port
+  port: 9750
+  # -- Number of replicas
+  replicaCount: 1
+  # -- ServiceMonitor for Prometheus Operator
+  serviceMonitor:
+    # -- Create a ServiceMonitor resource
+    enabled: false
+    # -- Scrape interval
+    interval: 60s
+    # -- Namespace for the ServiceMonitor (defaults to release namespace)
+    namespace: ""
+    # -- Additional labels for the ServiceMonitor
+    additionalLabels: {}
+  # -- Node selector
+  nodeSelector: {}
+  # -- Tolerations
+  tolerations: []
+  # -- Affinity rules
+  affinity: {}
+  # -- Pod annotations
+  podAnnotations: {}
+  # -- Pod security context
+  podSecurityContext: {}
+  # -- Container security context
+  securityContext: {}
+  # -- Additional environment variables for the exporter
+  extraEnv: []
+  # -- Resource requests and limits
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+## -- Shared log PVC between CronJob and Exporter
+sharedLogs:
+  # -- Enable shared PVC for log sharing
+  enabled: true
+  # -- PVC size
+  size: 1Gi
+  # -- StorageClass (leave empty for cluster default)
+  storageClass: ""
+  # -- Access modes
+  accessModes:
+    - ReadWriteMany
+
+## -- Image pull secrets (applies to both components)
+imagePullSecrets: []

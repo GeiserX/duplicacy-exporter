@@ -1,0 +1,22 @@
+apiVersion: v2
+name: duplicacy
+description: Helm chart for Duplicacy backup automation and Prometheus monitoring
+type: application
+version: 0.1.0
+appVersion: "3.2.5.2"
+maintainers:
+  - name: Sergio Fernandez
+    email: acsdesk@protonmail.com
+keywords:
+  - duplicacy
+  - backup
+  - prometheus
+  - exporter
+  - s3
+  - monitoring
+home: https://github.com/GeiserX/duplicacy-cli-cron
+sources:
+  - https://github.com/GeiserX/duplicacy-cli-cron
+  - https://github.com/GeiserX/duplicacy-exporter
+annotations:
+  licenses: GPL-3.0
