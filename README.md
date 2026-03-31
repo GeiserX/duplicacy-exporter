@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/GeiserX/duplicacy-exporter/releases"><img src="https://img.shields.io/github/v/release/GeiserX/duplicacy-exporter?style=flat-square&color=E6522C" alt="GitHub Release"></a>
   <a href="https://github.com/GeiserX/duplicacy-exporter/pkgs/container/duplicacy-exporter"><img src="https://img.shields.io/badge/ghcr.io-duplicacy--exporter-blue?style=flat-square&logo=docker&logoColor=white" alt="Container Image"></a>
+  <a href="https://grafana.com/grafana/dashboards/25089"><img src="https://img.shields.io/badge/Grafana-Dashboard%2025089-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana Dashboard"></a>
   <a href="https://github.com/GeiserX/duplicacy-exporter/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GeiserX/duplicacy-exporter?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
   <img src="https://img.shields.io/badge/image%20size-~30MB-green?style=flat-square" alt="Image Size">
@@ -213,6 +214,12 @@ groups:
         annotations:
           summary: "No successful Duplicacy backup in 24h for {{ $labels.snapshot_id }}"
 ```
+
+## Grafana Dashboard
+
+A ready-to-import dashboard is included in [`dashboard.json`](dashboard.json) and published on [Grafana.com (#25089)](https://grafana.com/grafana/dashboards/25089).
+
+Import it in Grafana via **Dashboards → Import → Upload JSON file** or use the dashboard ID `25089`.
 
 ## Troubleshooting
 
