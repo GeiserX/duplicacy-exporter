@@ -27,7 +27,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -544,10 +544,10 @@ class BackupState:
             snapshot_match = re.search(r"_(.+?)_", line.split("\u2014", 1)[-1])
             if machine_match and not MACHINE_NAME:
                 self.machine = machine_match.group(1)
-            if snapshot_match:
+            if snapshot_match and not self.in_backup:
                 self.current_snapshot = snapshot_match.group(1)
-            logger.debug("Notification: machine=%s snapshot=%s",
-                         self.machine, self.current_snapshot)
+            logger.debug("Notification: machine=%s snapshot=%s in_backup=%s",
+                         self.machine, self.current_snapshot, self.in_backup)
 
 
 # ---------------------------------------------------------------------------
