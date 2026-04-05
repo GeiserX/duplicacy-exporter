@@ -10,6 +10,7 @@ on:
       - 'Dockerfile'
       - '.github/workflows/docker-publish.yml'
       - 'requirements.txt'
+      - '*.py'
       - 'src/**'
       - 'app/**'
   workflow_dispatch:
