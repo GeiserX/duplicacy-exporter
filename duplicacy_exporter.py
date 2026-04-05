@@ -1,5 +1,5 @@
 """
-Duplicacy Prometheus Exporter v0.3.1
+Duplicacy Prometheus Exporter v0.3.4
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 

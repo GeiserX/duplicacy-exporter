@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/GeiserX/duplicacy-exporter/releases"><img src="https://img.shields.io/github/v/release/GeiserX/duplicacy-exporter?style=flat-square&color=E6522C" alt="GitHub Release"></a>
-  <a href="https://github.com/GeiserX/duplicacy-exporter/pkgs/container/duplicacy-exporter"><img src="https://img.shields.io/badge/ghcr.io-duplicacy--exporter-blue?style=flat-square&logo=docker&logoColor=white" alt="Container Image"></a>
+  <a href="https://hub.docker.com/r/drumsergio/duplicacy-exporter"><img src="https://img.shields.io/docker/v/drumsergio/duplicacy-exporter?sort=semver&style=flat-square&logo=docker&label=Docker%20Hub" alt="Docker Hub"></a>
   <a href="https://grafana.com/grafana/dashboards/25089"><img src="https://img.shields.io/badge/Grafana-Dashboard%2025089-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana Dashboard"></a>
   <a href="https://github.com/GeiserX/duplicacy-exporter/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GeiserX/duplicacy-exporter?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
@@ -59,7 +59,7 @@ Deploy alongside your Duplicacy CLI container:
 ```yaml
 services:
   duplicacy-exporter:
-    image: ghcr.io/geiserx/duplicacy-exporter:0.3.3
+    image: drumsergio/duplicacy-exporter:0.3.4
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -77,7 +77,7 @@ services:
 ```yaml
 services:
   duplicacy-exporter:
-    image: ghcr.io/geiserx/duplicacy-exporter:0.3.3
+    image: drumsergio/duplicacy-exporter:0.3.4
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -96,7 +96,7 @@ If you write Duplicacy logs to a file instead of using Docker:
 ```yaml
 services:
   duplicacy-exporter:
-    image: ghcr.io/geiserx/duplicacy-exporter:0.3.3
+    image: drumsergio/duplicacy-exporter:0.3.4
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
