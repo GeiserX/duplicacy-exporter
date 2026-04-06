@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="duplicacy-exporter banner" width="900"/>
+  <img src="https://raw.githubusercontent.com/GeiserX/duplicacy-exporter/main/docs/images/banner.svg" alt="duplicacy-exporter banner" width="900"/>
 </p>
 
 <p align="center">
@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/duplicacy-exporter/"><img src="https://img.shields.io/pypi/v/duplicacy-exporter?style=flat-square&logo=python&logoColor=white&label=PyPI" alt="PyPI"></a>
   <a href="https://github.com/GeiserX/duplicacy-exporter/releases"><img src="https://img.shields.io/github/v/release/GeiserX/duplicacy-exporter?style=flat-square&color=E6522C" alt="GitHub Release"></a>
   <a href="https://hub.docker.com/r/drumsergio/duplicacy-exporter"><img src="https://img.shields.io/docker/v/drumsergio/duplicacy-exporter?sort=semver&style=flat-square&logo=docker&label=Docker%20Hub" alt="Docker Hub"></a>
   <a href="https://grafana.com/grafana/dashboards/25089"><img src="https://img.shields.io/badge/Grafana-Dashboard%2025089-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana Dashboard"></a>
