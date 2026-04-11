@@ -14,6 +14,7 @@
   <a href="https://github.com/GeiserX/duplicacy-exporter/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GeiserX/duplicacy-exporter?style=flat-square" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
   <img src="https://img.shields.io/badge/image%20size-~30MB-green?style=flat-square" alt="Image Size">
+  <a href="https://codecov.io/gh/GeiserX/duplicacy-exporter"><img src="https://img.shields.io/codecov/c/github/GeiserX/duplicacy-exporter?style=flat-square" alt="Coverage"></a>
 </p>
 
 ---
