@@ -49,3 +49,16 @@ duplicacy-exporter = "duplicacy_exporter:main"
 
 [tool.setuptools]
 py-modules = ["duplicacy_exporter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["duplicacy_exporter"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+exclude_lines = [
+    "if __name__",
+]

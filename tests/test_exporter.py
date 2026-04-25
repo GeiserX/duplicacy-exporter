@@ -1086,17 +1086,177 @@ class TestMetricsHTTPHandler:
 # =========================================================================
 
 class TestTailDockerLogs:
-    """tail_docker_logs uses an internal _UnixConn(HTTPConnection) subclass
-    that creates real AF_UNIX sockets — cannot be reliably unit-tested.
-    The function is excluded from coverage via codecov.yml ignore.
-    We keep a minimal smoke test that verifies the function exists and
-    its retry loop by raising immediately.
-    """
-
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_exists_and_is_callable(self):
         import duplicacy_exporter
         assert callable(duplicacy_exporter.tail_docker_logs)
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_successful_frame_parsing(self):
+        """Simulate Docker log stream with framed output and verify lines are processed."""
+        import duplicacy_exporter
+
+        state = BackupState()
+        call_count = 0
+
+        # Build a Docker log frame: 8-byte header + payload
+        # Header: first byte = stream type (1=stdout), bytes 4-8 = payload size (big-endian)
+        log_line = b"--- Backup -> Primary (testsnap) ---\n"
+        frame = b"\x01\x00\x00\x00" + len(log_line).to_bytes(4, "big") + log_line
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        # read1 returns frame on first call, empty on second to break inner loop
+        mock_resp.read1 = MagicMock(side_effect=[frame, b""])
+
+        mock_conn = MagicMock()
+        mock_conn.getresponse.return_value = mock_resp
+
+        def fake_sleep(seconds):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 1:
+                raise KeyboardInterrupt("Stop test")
+
+        # Patch the internal _UnixConn by patching http.client.HTTPConnection
+        # The function imports http.client inside itself, so we patch at module level
+        with patch("http.client.HTTPConnection.__init__", return_value=None), \
+             patch("http.client.HTTPConnection.request"), \
+             patch("http.client.HTTPConnection.getresponse", return_value=mock_resp), \
+             patch("socket.socket") as mock_socket_cls, \
+             patch("time.sleep", side_effect=fake_sleep):
+            mock_sock_instance = MagicMock()
+            mock_socket_cls.return_value = mock_sock_instance
+            with pytest.raises(KeyboardInterrupt):
+                duplicacy_exporter.tail_docker_logs(state, "test-container")
+
+        assert state.current_snapshot == "testsnap"
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_non_200_response_triggers_retry(self):
+        """Non-200 Docker API response raises RuntimeError, caught by retry loop."""
+        import duplicacy_exporter
+
+        state = BackupState()
+        call_count = 0
+
+        mock_resp = MagicMock()
+        mock_resp.status = 404
+        mock_resp.read.return_value = b"no such container"
+
+        def fake_sleep(seconds):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 1:
+                raise KeyboardInterrupt("Stop test")
+
+        with patch("http.client.HTTPConnection.__init__", return_value=None), \
+             patch("http.client.HTTPConnection.request"), \
+             patch("http.client.HTTPConnection.getresponse", return_value=mock_resp), \
+             patch("socket.socket"), \
+             patch("time.sleep", side_effect=fake_sleep):
+            with pytest.raises(KeyboardInterrupt):
+                duplicacy_exporter.tail_docker_logs(state, "bad-container")
+
+        assert call_count >= 1
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_connection_error_triggers_retry(self):
+        """Connection failure triggers the except branch and retries."""
+        import duplicacy_exporter
+
+        state = BackupState()
+        call_count = 0
+
+        def fake_sleep(seconds):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 1:
+                raise KeyboardInterrupt("Stop test")
+
+        with patch("http.client.HTTPConnection.__init__", return_value=None), \
+             patch("http.client.HTTPConnection.request", side_effect=ConnectionRefusedError("refused")), \
+             patch("socket.socket"), \
+             patch("time.sleep", side_effect=fake_sleep):
+            with pytest.raises(KeyboardInterrupt):
+                duplicacy_exporter.tail_docker_logs(state, "test-container")
+
+        assert call_count >= 1
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_partial_frame_waits_for_more_data(self):
+        """When buffer has incomplete frame, it waits for more data."""
+        import duplicacy_exporter
+
+        state = BackupState()
+        call_count = 0
+
+        log_line = b"--- Backup -> Primary (partsnap) ---\n"
+        frame = b"\x01\x00\x00\x00" + len(log_line).to_bytes(4, "big") + log_line
+
+        # Split the frame across two read1 calls
+        split_point = 12  # In the middle of the payload
+        chunk1 = frame[:split_point]
+        chunk2 = frame[split_point:]
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read1 = MagicMock(side_effect=[chunk1, chunk2, b""])
+
+        def fake_sleep(seconds):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 1:
+                raise KeyboardInterrupt("Stop test")
+
+        with patch("http.client.HTTPConnection.__init__", return_value=None), \
+             patch("http.client.HTTPConnection.request"), \
+             patch("http.client.HTTPConnection.getresponse", return_value=mock_resp), \
+             patch("socket.socket"), \
+             patch("time.sleep", side_effect=fake_sleep):
+            with pytest.raises(KeyboardInterrupt):
+                duplicacy_exporter.tail_docker_logs(state, "test-container")
+
+        assert state.current_snapshot == "partsnap"
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_multiple_frames_in_single_chunk(self):
+        """Multiple frames in a single read chunk are all processed."""
+        import duplicacy_exporter
+
+        state = BackupState()
+        call_count = 0
+
+        line1 = b"--- Backup -> Primary (multi1) ---\n"
+        line2 = b"Storage set to sftp://user@wt.mango-alpha.ts.net/backups\n"
+        frame1 = b"\x01\x00\x00\x00" + len(line1).to_bytes(4, "big") + line1
+        frame2 = b"\x01\x00\x00\x00" + len(line2).to_bytes(4, "big") + line2
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read1 = MagicMock(side_effect=[frame1 + frame2, b""])
+
+        def fake_sleep(seconds):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 1:
+                raise KeyboardInterrupt("Stop test")
+
+        with patch("http.client.HTTPConnection.__init__", return_value=None), \
+             patch("http.client.HTTPConnection.request"), \
+             patch("http.client.HTTPConnection.getresponse", return_value=mock_resp), \
+             patch("socket.socket"), \
+             patch("time.sleep", side_effect=fake_sleep):
+            with pytest.raises(KeyboardInterrupt):
+                duplicacy_exporter.tail_docker_logs(state, "test-container")
+
+        assert state.current_snapshot == "multi1"
+        assert state.current_storage_target == "wt"
 
 
 # =========================================================================
