@@ -10,10 +10,10 @@ services:
       - MODE=log_tail
 
       # --- log_tail mode settings ---
-      # Container whose logs to tail (requires Docker socket)
-      - DOCKER_CONTAINER_NAME=duplicacy-cli-cron
-      # Alternative: tail a log file instead of Docker logs
-      # - LOG_FILE=/logs/duplicacy.log
+      # Tail a shared log file (no Docker socket needed)
+      - LOG_FILE=/logs/duplicacy.log
+      # Alternative: tail Docker container logs (requires Docker socket mount)
+      # - DOCKER_CONTAINER_NAME=duplicacy-cli-cron
 
       # --- webhook mode settings ---
       # Set MODE=webhook to receive Duplicacy Web UI report_url POSTs
@@ -23,8 +23,12 @@ services:
       - LISTEN_PORT=9750
       - LOG_LEVEL=INFO
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      # If using LOG_FILE mode, mount the log directory:
-      # - /path/to/duplicacy/logs:/logs:ro
+      # Share the log directory from your Duplicacy container
+      - duplicacy-logs:/logs:ro
     ports:
       - "9750:9750"
+
+volumes:
+  duplicacy-logs:
+    # Create this volume and mount it in your Duplicacy container as well,
+    # writing logs to /logs/duplicacy.log
