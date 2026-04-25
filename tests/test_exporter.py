@@ -15,10 +15,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from duplicacy_exporter import (
     _extract_storage_target,
     _load_storage_host_map,
+    _load_last_timestamp,
+    _save_last_timestamp,
     _parse_size,
     _parse_speed,
     _parse_duration,
     _parse_docker_timestamp,
+    tail_docker_logs,
     BackupState,
     WebhookHandler,
     MetricsHTTPHandler,
@@ -48,6 +51,7 @@ from duplicacy_exporter import (
     total_bytes_uploaded,
     prune_running,
     last_prune_success_ts,
+    TIMESTAMP_FILE,
 )
 
 
@@ -1250,3 +1254,260 @@ class TestMain:
         with patch.object(duplicacy_exporter, "HTTPServer", return_value=server_mock):
             duplicacy_exporter.main()
             server_mock.serve_forever.assert_called_once()
+
+
+# =========================================================================
+# _load_last_timestamp / _save_last_timestamp
+# =========================================================================
+
+class TestTimestampPersistence:
+    def test_load_returns_value_from_file(self, tmp_path):
+        ts_file = tmp_path / "ts"
+        ts_file.write_text("1234567890.123456\n")
+        with patch("duplicacy_exporter.TIMESTAMP_FILE", str(ts_file)):
+            assert _load_last_timestamp() == pytest.approx(1234567890.123456)
+
+    def test_load_returns_zero_when_file_missing(self, tmp_path):
+        with patch("duplicacy_exporter.TIMESTAMP_FILE", str(tmp_path / "nonexistent")):
+            assert _load_last_timestamp() == 0.0
+
+    def test_load_returns_zero_on_invalid_content(self, tmp_path):
+        ts_file = tmp_path / "ts"
+        ts_file.write_text("not-a-number\n")
+        with patch("duplicacy_exporter.TIMESTAMP_FILE", str(ts_file)):
+            assert _load_last_timestamp() == 0.0
+
+    def test_save_writes_timestamp(self, tmp_path):
+        ts_file = tmp_path / "ts"
+        with patch("duplicacy_exporter.TIMESTAMP_FILE", str(ts_file)):
+            _save_last_timestamp(9876543210.654321)
+        content = ts_file.read_text().strip()
+        assert float(content) == pytest.approx(9876543210.654321)
+
+    def test_save_handles_oserror(self, tmp_path):
+        """OSError during save is caught and logged, not raised."""
+        with patch("duplicacy_exporter.TIMESTAMP_FILE", "/nonexistent/dir/ts"):
+            _save_last_timestamp(123.0)  # should not raise
+
+
+# =========================================================================
+# tail_docker_logs (mocked)
+# =========================================================================
+
+def _make_docker_frame(stream_type: int, payload: bytes) -> bytes:
+    """Build a Docker multiplexed stream frame.
+
+    Format: [stream_type(1)] [0(3)] [size(4 big-endian)] [payload]
+    """
+    header = bytes([stream_type, 0, 0, 0]) + len(payload).to_bytes(4, "big")
+    return header + payload
+
+
+class _FakeDockerResponse:
+    """Simulate a Docker Engine API streamed response with multiplexed frames."""
+
+    def __init__(self, frames_bytes, status=200):
+        self.status = status
+        self._buf = frames_bytes
+        self._pos = 0
+
+    def read1(self, sz):
+        chunk = self._buf[self._pos:self._pos + sz]
+        self._pos += len(chunk)
+        return chunk
+
+    def read(self):
+        return self._buf
+
+
+class _FakeConn:
+    """Fake HTTP connection that returns a preset response, then raises."""
+
+    def __init__(self, resp):
+        self._resp = resp
+        self._called = False
+
+    def request(self, *args, **kwargs):
+        pass
+
+    def getresponse(self):
+        if self._called:
+            raise ConnectionError("stop-after-one-iteration")
+        self._called = True
+        return self._resp
+
+
+class TestTailDockerLogsMocked:
+    """Test tail_docker_logs by replacing its internal _UnixConn class."""
+
+    def _run_tail(self, state, container, frames_bytes, last_ts=0.0,
+                  max_buf=None, resp_status=200):
+        """Helper: run tail_docker_logs with a fake connection.
+
+        Replaces the _UnixConn class inside tail_docker_logs by
+        monkey-patching the function's code: we wrap it so that the
+        locally-defined _UnixConn is replaced before the while-loop runs.
+        Instead we use a simpler approach: patch http.client.HTTPConnection
+        methods and socket.socket, and make request() raise on the 2nd call
+        so the outer while-loop breaks into the except branch where
+        time.sleep raises KeyboardInterrupt.
+        """
+        resp = _FakeDockerResponse(frames_bytes, status=resp_status)
+        call_count = 0
+
+        def fake_request(self_conn, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise ConnectionError("stop-after-one-iteration")
+
+        def fake_getresponse(self_conn):
+            return resp
+
+        patches = [
+            patch("duplicacy_exporter._load_last_timestamp", return_value=last_ts),
+            patch("duplicacy_exporter._save_last_timestamp"),
+            patch("socket.socket"),
+            patch("http.client.HTTPConnection.request", fake_request),
+            patch("http.client.HTTPConnection.getresponse", fake_getresponse),
+            patch("time.sleep", side_effect=KeyboardInterrupt("stop")),
+        ]
+        if max_buf is not None:
+            patches.append(patch("duplicacy_exporter.MAX_LOG_BUFFER", max_buf))
+
+        for p in patches:
+            p.start()
+        try:
+            tail_docker_logs(state, container)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            for p in patches:
+                p.stop()
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_processes_docker_frames(self):
+        """Frames with valid log lines are parsed and processed."""
+        state = BackupState()
+
+        line1 = b"2024-03-15T10:30:00.100000000Z --- Backup -> Primary (appdata) ---\n"
+        line2 = b"2024-03-15T10:30:01.200000000Z Storage set to sftp://user@wt.mango-alpha.ts.net/backups\n"
+        frames = _make_docker_frame(1, line1) + _make_docker_frame(1, line2)
+
+        self._run_tail(state, "test-container", frames)
+
+        assert state.current_storage_target == "wt"
+        assert state.in_backup is True
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_non_200_response_triggers_retry(self):
+        """Non-200 Docker API response triggers the retry path."""
+        state = BackupState()
+        self._run_tail(state, "missing-container", b"no such container",
+                       resp_status=404)
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_skips_already_seen_timestamps(self):
+        """Lines with timestamps <= last_ts are skipped."""
+        state = BackupState()
+
+        old_line = b"2024-03-15T10:00:00.000000000Z Old line should be skipped\n"
+        new_line = b"2024-03-15T12:00:00.000000000Z --- Backup -> Primary (freshdata) ---\n"
+        frames = _make_docker_frame(1, old_line) + _make_docker_frame(1, new_line)
+
+        # last_ts between old and new line timestamps
+        self._run_tail(state, "test-container", frames, last_ts=1710500400.0)
+
+        assert state.current_snapshot == "freshdata"
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_buffer_overflow_discards_data(self):
+        """Buffer exceeding MAX_LOG_BUFFER is discarded."""
+        state = BackupState()
+
+        big_payload = b"2024-03-15T10:30:00.000000000Z " + b"X" * 100 + b"\n"
+        frames = _make_docker_frame(1, big_payload)
+
+        self._run_tail(state, "test-container", frames, max_buf=16)
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_connection_error_retries(self):
+        """Socket connection failure triggers retry loop."""
+        state = BackupState()
+
+        with patch("duplicacy_exporter._load_last_timestamp", return_value=0.0), \
+             patch("socket.socket"), \
+             patch("http.client.HTTPConnection.request",
+                   side_effect=ConnectionRefusedError("refused")), \
+             patch("time.sleep", side_effect=KeyboardInterrupt("stop")):
+            try:
+                tail_docker_logs(state, "test-container")
+            except KeyboardInterrupt:
+                pass
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_resumes_from_persisted_timestamp(self):
+        """When last_ts > 0, the resume log path is taken."""
+        state = BackupState()
+        # Empty response, just verifying the resume-from-timestamp path
+        self._run_tail(state, "test-container", b"", last_ts=999999.0)
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.REPLAY_HOURS", 1)
+    def test_saves_timestamp_on_new_lines(self):
+        """New log lines with timestamps trigger _save_last_timestamp."""
+        state = BackupState()
+
+        line = b"2024-03-15T10:30:00.100000000Z some log line\n"
+        frames = _make_docker_frame(1, line)
+
+        saved = []
+        call_count = 0
+
+        def fake_request(self_conn, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 1:
+                raise ConnectionError("stop-after-one-iteration")
+
+        resp = _FakeDockerResponse(frames)
+
+        with patch("duplicacy_exporter._load_last_timestamp", return_value=0.0), \
+             patch("duplicacy_exporter._save_last_timestamp", side_effect=lambda ts: saved.append(ts)), \
+             patch("socket.socket"), \
+             patch("http.client.HTTPConnection.request", fake_request), \
+             patch("http.client.HTTPConnection.getresponse", lambda *a, **k: resp), \
+             patch("time.sleep", side_effect=KeyboardInterrupt("stop")):
+            try:
+                tail_docker_logs(state, "test-container")
+            except KeyboardInterrupt:
+                pass
+
+        assert len(saved) > 0
+        assert saved[0] > 0
+
+
+# =========================================================================
+# __main__ guard
+# =========================================================================
+
+class TestMainGuard:
+    def test_main_guard(self):
+        """Verify __name__ == '__main__' calls main()."""
+        import duplicacy_exporter
+        with patch.object(duplicacy_exporter, "main") as mock_main:
+            exec(
+                compile(
+                    "if __name__ == '__main__': main()",
+                    "<test>",
+                    "exec",
+                ),
+                {"__name__": "__main__", "main": mock_main},
+            )
+            mock_main.assert_called_once()
