@@ -42,6 +42,8 @@ WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 MACHINE_NAME = os.getenv("MACHINE_NAME", "")
 TAILSCALE_DOMAIN = os.getenv("TAILSCALE_DOMAIN", "mango-alpha.ts.net")
 REPLAY_HOURS = int(os.getenv("REPLAY_HOURS", "25"))
+TIMESTAMP_FILE = os.getenv("TIMESTAMP_FILE", "/tmp/duplicacy_exporter_last_ts")
+MAX_LOG_BUFFER = int(os.getenv("MAX_LOG_BUFFER", str(1024 * 1024)))  # 1 MB
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -649,6 +651,24 @@ class MetricsHTTPHandler(BaseHTTPRequestHandler):
 # Log tail mode: Docker container logs
 # ---------------------------------------------------------------------------
 
+def _load_last_timestamp() -> float:
+    """Load the last-seen log timestamp from the persistence file."""
+    try:
+        with open(TIMESTAMP_FILE, "r") as f:
+            return float(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return 0.0
+
+
+def _save_last_timestamp(ts: float):
+    """Persist the last-seen log timestamp to disk."""
+    try:
+        with open(TIMESTAMP_FILE, "w") as f:
+            f.write(f"{ts:.6f}\n")
+    except OSError as exc:
+        logger.warning("Could not persist last timestamp: %s", exc)
+
+
 def tail_docker_logs(state: BackupState, container_name: str):
     """Tail Docker container logs via the Docker Engine API over Unix socket."""
     import http.client
@@ -666,7 +686,10 @@ def tail_docker_logs(state: BackupState, container_name: str):
     sock_path = os.getenv("DOCKER_HOST", "/var/run/docker.sock")
     logger.info("Tailing logs from container %s via %s", container_name, sock_path)
 
+    last_ts = _load_last_timestamp()
     since = int(time.time()) - (REPLAY_HOURS * 3600)
+    if last_ts > 0:
+        logger.info("Resuming from persisted timestamp %.6f (skipping already-counted entries)", last_ts)
     logger.info("Replaying logs from last %dh (since %d)", REPLAY_HOURS, since)
 
     while True:
@@ -688,6 +711,13 @@ def tail_docker_logs(state: BackupState, container_name: str):
                 if not chunk:
                     break
                 buf += chunk
+
+                # H10: cap buffer to prevent unbounded growth
+                if len(buf) > MAX_LOG_BUFFER:
+                    logger.warning("Log buffer exceeded %d bytes, discarding partial data", MAX_LOG_BUFFER)
+                    buf = b""
+                    continue
+
                 while len(buf) >= 8:
                     frame_size = int.from_bytes(buf[4:8], "big")
                     total = 8 + frame_size
@@ -698,7 +728,13 @@ def tail_docker_logs(state: BackupState, container_name: str):
                     for subline in payload.rstrip("\n").split("\n"):
                         if subline:
                             log_ts, clean_line = _parse_docker_timestamp(subline)
+                            # H9: skip entries already counted before restart
+                            if last_ts > 0 and log_ts > 0 and log_ts <= last_ts:
+                                continue
                             state.process_line(clean_line, log_time=log_ts)
+                            if log_ts > 0:
+                                last_ts = log_ts
+                                _save_last_timestamp(last_ts)
 
             since = int(time.time())
         except Exception as exc:

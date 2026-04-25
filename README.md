@@ -56,7 +56,7 @@
 
 ### Docker Compose -- Log Tail Mode (recommended for CLI)
 
-Deploy alongside your Duplicacy CLI container:
+Deploy alongside your Duplicacy CLI container using a shared log volume:
 
 ```yaml
 services:
@@ -66,13 +66,18 @@ services:
     restart: unless-stopped
     environment:
       - MODE=log_tail
-      - DOCKER_CONTAINER_NAME=duplicacy-cli-cron
+      - LOG_FILE=/logs/duplicacy.log
       - LISTEN_PORT=9750
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - duplicacy-logs:/logs:ro
     ports:
       - "9750:9750"
+
+volumes:
+  duplicacy-logs:
 ```
+
+> **Note:** Mount the same `duplicacy-logs` volume in your Duplicacy container, writing output to `/logs/duplicacy.log`. This avoids exposing the Docker socket.
 
 ### Docker Compose -- Webhook Mode (for Web UI)
 
@@ -126,6 +131,8 @@ All configuration is done through environment variables:
 | `TAILSCALE_DOMAIN` | `mango-alpha.ts.net` | Tailscale domain suffix to strip from storage URLs |
 | `STORAGE_HOST_MAP` | _(empty)_ | JSON object mapping hostname/IP to display name |
 | `REPLAY_HOURS` | `25` | Hours of Docker log history to replay on startup |
+| `TIMESTAMP_FILE` | `/tmp/duplicacy_exporter_last_ts` | File to persist last-seen log timestamp (avoids counter double-count on restart) |
+| `MAX_LOG_BUFFER` | `1048576` | Maximum Docker log buffer size in bytes before discarding partial data (1 MB) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
 ### Storage host mapping example
@@ -249,6 +256,8 @@ Verify the `WEBHOOK_PATH` environment variable matches the path you configured i
 
 - [`duplicacy-container`](https://github.com/GeiserX/duplicacy-container) -- Runtime image and Helm chart for the Kubernetes Duplicacy stack
 - [`duplicacy-cli-cron`](https://github.com/GeiserX/duplicacy-cli-cron) -- Scripts, wrappers, and backup recipes for Duplicacy CLI
+- [`duplicacy-ha`](https://github.com/GeiserX/duplicacy-ha) -- Home Assistant integration for Duplicacy
+- [`duplicacy-mcp`](https://github.com/GeiserX/duplicacy-mcp) -- MCP server for Duplicacy
 - [Duplicacy](https://duplicacy.com) -- Lock-free deduplication cloud backup tool
 - [Prometheus](https://prometheus.io) -- Monitoring and alerting toolkit
 - [Grafana](https://grafana.com) -- Observability and visualization platform
