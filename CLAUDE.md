@@ -1,4 +1,4 @@
-# AGENTS.md — Duplicacy Exporter
+# CLAUDE.md — Duplicacy Exporter
 
 ## Project Overview
 
