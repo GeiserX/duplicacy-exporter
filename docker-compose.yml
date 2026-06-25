@@ -2,7 +2,7 @@
 services:
   duplicacy-exporter:
     build: .
-    # image: drumsergio/duplicacy-exporter:0.3.4
+    # image: drumsergio/duplicacy-exporter:0.4.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:

@@ -61,7 +61,7 @@ Deploy alongside your Duplicacy CLI container using a shared log volume:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.3.4
+    image: drumsergio/duplicacy-exporter:0.4.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -84,7 +84,7 @@ volumes:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.3.4
+    image: drumsergio/duplicacy-exporter:0.4.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -103,7 +103,7 @@ If you write Duplicacy logs to a file instead of using Docker:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.3.4
+    image: drumsergio/duplicacy-exporter:0.4.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
