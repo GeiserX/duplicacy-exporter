@@ -127,7 +127,8 @@ All configuration is done through environment variables:
 | `LOG_FILE` | _(empty)_ | Path to log file; alternative to Docker socket (log_tail mode) |
 | `LISTEN_PORT` | `9750` | Port for the metrics and webhook HTTP server |
 | `WEBHOOK_PATH` | `/webhook` | Path for the webhook POST endpoint (webhook mode) |
-| `MACHINE_NAME` | _(empty)_ | Machine name label; auto-detected from logs if not set |
+| `MACHINE_NAME` | _(empty)_ | Machine name label. In `log_tail` mode it must be set (or learned from a `DUPLICACY_META` / notification line) before backup metrics are emitted. |
+| `SNAPSHOT_ID` | _(empty)_ | Snapshot id for `log_tail` users whose logs have no section headers / `DUPLICACY_META` (e.g. stock `duplicacy backup`). Lets post-run summary metrics resolve. |
 | `TAILSCALE_DOMAIN` | `mango-alpha.ts.net` | Tailscale domain suffix to strip from storage URLs |
 | `STORAGE_HOST_MAP` | _(empty)_ | JSON object mapping hostname/IP to display name |
 | `REPLAY_HOURS` | `25` | Hours of Docker log history to replay on startup |
@@ -147,6 +148,14 @@ STORAGE_HOST_MAP='{"192.168.10.100":"watchtower","192.168.20.5":"geiserct"}'
 
 All backup metrics carry labels: `snapshot_id`, `storage_target`, `machine`.
 All prune metrics carry labels: `storage_target`, `machine`.
+
+Each distinct `(snapshot_id, storage_target)` is its own series (and its own device
+in [duplicacy-ha](https://github.com/GeiserX/duplicacy-ha)), so multiple backups are
+tracked independently. In `webhook` mode `snapshot_id` comes from the Web UI report's
+backup id, falling back to the source **directory** name — so two backups on one
+machine never collapse into one. In `log_tail` mode it comes from a
+`DUPLICACY_META snapshot_id=…` line, a `--- Backup -> … (id) ---` section header, or
+the `SNAPSHOT_ID` env var.
 
 ### Real-time (updated per chunk during backup)
 
@@ -179,6 +188,13 @@ All prune metrics carry labels: `storage_target`, `machine`.
 |--------|------|-------------|
 | `duplicacy_prune_running` | Gauge | 1 if prune is in progress |
 | `duplicacy_prune_last_success_timestamp_seconds` | Gauge | Unix timestamp of last successful prune |
+
+### Diagnostics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `duplicacy_exporter_last_activity_timestamp_seconds` | Gauge | Unix timestamp of the last log line parsed (alert if it goes stale) |
+| `duplicacy_exporter_backups_seen_total` | Counter | Completed backups detected, including any dropped for a missing `snapshot_id`/`storage_target`/`machine`. If this climbs while labelled series stay empty, the exporter is seeing backups it can't label — set `SNAPSHOT_ID`/`MACHINE_NAME`. |
 
 ## Endpoints
 
