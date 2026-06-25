@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from duplicacy_exporter import (
     _extract_storage_target,
+    _basename,
     _load_storage_host_map,
     _load_last_timestamp,
     _save_last_timestamp,
@@ -51,6 +52,8 @@ from duplicacy_exporter import (
     total_bytes_uploaded,
     prune_running,
     last_prune_success_ts,
+    backups_seen,
+    exporter_last_activity_ts,
     TIMESTAMP_FILE,
 )
 
@@ -912,7 +915,9 @@ class TestWebhookHandler:
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_webhook_with_storage_url_fallback(self):
-        """Payload uses storage_url instead of storage."""
+        """Payload uses storage_url instead of storage. With no id/directory the
+        snapshot id falls back to a machine:storage composite -- never a bare
+        machine name, which would collapse two backups on one machine into one."""
         state = BackupState()
         handler = WebhookHandler(state)
         payload = {
@@ -923,7 +928,7 @@ class TestWebhookHandler:
             "end_time": 1600,
         }
         handler.handle(payload)
-        labels = ("watchtower", "host", "watchtower")
+        labels = ("watchtower:host", "host", "watchtower")
         assert last_exit_code.labels(*labels)._value.get() == 0.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "")
@@ -1511,3 +1516,144 @@ class TestMainGuard:
                 {"__name__": "__main__", "main": mock_main},
             )
             mock_main.assert_called_once()
+
+
+# =========================================================================
+# Issue duplicacy-ha#9: backup differentiation (new in v0.4.0)
+# =========================================================================
+
+class TestBasename:
+    def test_empty(self):
+        assert _basename("") == ""
+
+    def test_simple_posix(self):
+        assert _basename("/mnt/photos") == "photos"
+
+    def test_trailing_slash(self):
+        assert _basename("/mnt/photos/") == "photos"
+
+    def test_windows_separator(self):
+        assert _basename("C:\\Users\\gchen\\repo") == "repo"
+
+    def test_single_component(self):
+        assert _basename("repo") == "repo"
+
+
+class TestWebhookDifferentiation:
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    def test_directory_used_when_no_id(self):
+        """With no id field, the source directory differentiates the backup."""
+        state = BackupState()
+        handler = WebhookHandler(state)
+        payload = {
+            "computer": "mac-mini",
+            "directory": "/Users/gchen/photos",
+            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "result": "success",
+            "start_time": 1000,
+            "end_time": 1600,
+        }
+        handler.handle(payload)
+        labels = ("photos", "wt", "mac-mini")
+        assert last_exit_code.labels(*labels)._value.get() == 0.0
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    def test_two_backups_one_machine_stay_distinct(self):
+        """Two Web UI backups on one machine (no id) must not collapse (issue #9)."""
+        state = BackupState()
+        handler = WebhookHandler(state)
+        base = {
+            "computer": "mac-mini",
+            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "result": "success",
+            "start_time": 1000,
+            "end_time": 1600,
+        }
+        handler.handle({**base, "directory": "/srv/docs"})
+        handler.handle({**base, "directory": "/srv/photos"})
+        assert last_exit_code.labels("docs", "wt", "mac-mini")._value.get() == 0.0
+        assert last_exit_code.labels("photos", "wt", "mac-mini")._value.get() == 0.0
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    def test_explicit_id_takes_precedence(self):
+        """An explicit id field wins over directory."""
+        state = BackupState()
+        handler = WebhookHandler(state)
+        payload = {
+            "id": "explicit",
+            "directory": "/srv/ignored",
+            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "computer": "mac-mini",
+            "result": "success",
+            "start_time": 0,
+            "end_time": 0,
+        }
+        handler.handle(payload)
+        assert last_exit_code.labels("explicit", "wt", "mac-mini")._value.get() == 0.0
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    def test_name_field_used(self):
+        """The 'name' field is honoured when present (no id)."""
+        state = BackupState()
+        handler = WebhookHandler(state)
+        payload = {
+            "name": "byname",
+            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "computer": "mac-mini",
+            "result": "success",
+            "start_time": 0,
+            "end_time": 0,
+        }
+        handler.handle(payload)
+        assert last_exit_code.labels("byname", "wt", "mac-mini")._value.get() == 0.0
+
+
+class TestSnapshotIdEnv:
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.SNAPSHOT_ID", "envsnap")
+    def test_env_seeds_snapshot(self):
+        """SNAPSHOT_ID env seeds current_snapshot so stock-CLI summaries resolve."""
+        state = BackupState()
+        assert state.current_snapshot == "envsnap"
+        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Backup for /data at revision 7 completed")
+        labels = ("envsnap", "wt", "testmachine")
+        assert last_revision.labels(*labels)._value.get() == 7.0
+
+
+class TestDiagnostics:
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    def test_backups_seen_increments_even_when_unlabelled(self):
+        """A completed backup bumps the counter even if it can't be labelled."""
+        before = backups_seen._value.get()
+        state = BackupState()
+        state.current_snapshot = ""  # unresolved -> labels drop, but still "seen"
+        state.process_line("Backup for /data at revision 1 completed")
+        assert backups_seen._value.get() == before + 1
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    def test_last_activity_updated(self):
+        state = BackupState()
+        state.process_line("some idle line", log_time=12345.0)
+        assert exporter_last_activity_ts._value.get() == 12345.0
+
+
+class TestMainMachineWarning:
+    @patch("duplicacy_exporter.MACHINE_NAME", "")
+    @patch("duplicacy_exporter.MODE", "log_tail")
+    @patch("duplicacy_exporter.LOG_FILE", "")
+    @patch("duplicacy_exporter.LISTEN_PORT", 0)
+    def test_main_warns_when_machine_name_unset(self):
+        """log_tail with no MACHINE_NAME emits a startup warning."""
+        import duplicacy_exporter
+        server_mock = MagicMock()
+        server_mock.serve_forever.side_effect = KeyboardInterrupt()
+        with patch.object(duplicacy_exporter, "HTTPServer", return_value=server_mock):
+            with patch.object(duplicacy_exporter, "tail_docker_logs"):
+                with patch("threading.Thread"):
+                    with patch.object(duplicacy_exporter.logger, "warning") as warn:
+                        duplicacy_exporter.main()
+                        assert any(
+                            "MACHINE_NAME is not set" in str(c.args[0])
+                            for c in warn.call_args_list
+                        )

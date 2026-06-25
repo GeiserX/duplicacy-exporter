@@ -1,5 +1,5 @@
 """
-Duplicacy Prometheus Exporter v0.3.4
+Duplicacy Prometheus Exporter v0.4.0
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 
@@ -27,7 +27,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.3.4"
+VERSION = "0.4.0"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -40,6 +40,9 @@ DOCKER_CONTAINER_NAME = os.getenv("DOCKER_CONTAINER_NAME", "duplicacy-cli-cron")
 LOG_FILE = os.getenv("LOG_FILE", "")
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 MACHINE_NAME = os.getenv("MACHINE_NAME", "")
+# Explicit snapshot id for stock-CLI log_tail users whose logs carry no section
+# headers / DUPLICACY_META lines. Seeds BackupState so summary metrics resolve.
+SNAPSHOT_ID = os.getenv("SNAPSHOT_ID", "")
 TAILSCALE_DOMAIN = os.getenv("TAILSCALE_DOMAIN", "mango-alpha.ts.net")
 REPLAY_HOURS = int(os.getenv("REPLAY_HOURS", "25"))
 TIMESTAMP_FILE = os.getenv("TIMESTAMP_FILE", "/tmp/duplicacy_exporter_last_ts")
@@ -99,6 +102,17 @@ def _extract_storage_target(url: str) -> str:
         return host.split(".")[0]
 
     return host
+
+
+def _basename(path: str) -> str:
+    """Last path component of a source directory, used as a backup identifier.
+
+    Handles POSIX (/) and Windows (\\) separators and trailing slashes.
+    """
+    if not path:
+        return ""
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
 
 # ---------------------------------------------------------------------------
 # Prometheus metrics
@@ -202,6 +216,20 @@ last_prune_success_ts = Gauge(
     "duplicacy_prune_last_success_timestamp_seconds",
     "Unix timestamp of the last successful prune",
     PRUNE_LABELS, registry=registry,
+)
+
+# Diagnostics — distinguish "exporter alive but seeing no labelled backups" from
+# "everything fine but idle", which otherwise look identical (empty /metrics).
+exporter_last_activity_ts = Gauge(
+    "duplicacy_exporter_last_activity_timestamp_seconds",
+    "Unix timestamp of the last log line the exporter parsed",
+    registry=registry,
+)
+backups_seen = Counter(
+    "duplicacy_exporter_backups_seen_total",
+    "Completed backups detected in the logs, including any that could not be "
+    "labelled due to a missing snapshot_id/storage_target/machine",
+    registry=registry,
 )
 
 # ---------------------------------------------------------------------------
@@ -311,7 +339,7 @@ class BackupState:
     def __init__(self):
         self.lock = threading.Lock()
         self.machine = MACHINE_NAME
-        self.current_snapshot = ""
+        self.current_snapshot = SNAPSHOT_ID
         self.current_storage_target = ""
         self.in_backup = False
         self.in_prune = False
@@ -360,6 +388,7 @@ class BackupState:
             return
         with self.lock:
             self._log_time = log_time or time.time()
+            exporter_last_activity_ts.set(self._log_time)
             self._process_line_inner(line)
 
     def _process_line_inner(self, line: str):
@@ -464,8 +493,16 @@ class BackupState:
         # --- Backup completed ---
         m = RE_BACKUP_END.search(line)
         if m:
+            backups_seen.inc()
             bl = self._backup_labels()
             if not bl:
+                logger.warning(
+                    "Backup completed but could not be labelled "
+                    "(snapshot_id=%r storage_target=%r machine=%r) - metrics dropped. "
+                    "Set SNAPSHOT_ID and MACHINE_NAME, or emit DUPLICACY_META / "
+                    "section headers.",
+                    self.current_snapshot, self.current_storage_target, self.machine,
+                )
                 return
             revision = int(m.group("revision"))
             backup_running.labels(*bl).set(0)
@@ -561,10 +598,23 @@ class WebhookHandler:
         self.state = state
 
     def handle(self, payload: dict):
-        snapshot_id = payload.get("id", payload.get("computer", "unknown"))
+        machine = payload.get("computer", MACHINE_NAME or "unknown")
         storage = payload.get("storage", payload.get("storage_url", ""))
         storage_target = _extract_storage_target(storage) if storage else "unknown"
-        machine = payload.get("computer", MACHINE_NAME or "unknown")
+
+        # Duplicacy Web UI's report payload has no "id" field, so the previous
+        # payload.get("id", computer) collapsed every backup on one machine into a
+        # single series (issue duplicacy-ha#9). Resolve a distinct per-backup id:
+        # explicit id-like fields first, then the source directory (always present
+        # and distinct per backup), then a machine:storage composite as last resort.
+        snapshot_id = (
+            payload.get("id")
+            or payload.get("snapshot_id")
+            or payload.get("name")
+            or payload.get("repository_id")
+            or _basename(payload.get("directory", ""))
+            or f"{machine}:{storage_target}"
+        )
         labels = (snapshot_id, storage_target, machine)
 
         result = payload.get("result", "")
@@ -774,6 +824,13 @@ def tail_log_file(state: BackupState, file_path: str):
 def main():
     logger.info("Starting duplicacy-exporter v%s (mode=%s, port=%d)",
                 VERSION, MODE, LISTEN_PORT)
+
+    if MODE == "log_tail" and not MACHINE_NAME:
+        logger.warning(
+            "MACHINE_NAME is not set - log_tail backup metrics are dropped until a "
+            "machine label resolves. Set MACHINE_NAME (and SNAPSHOT_ID for stock CLI "
+            "logs that have no section headers)."
+        )
 
     state = BackupState()
 
