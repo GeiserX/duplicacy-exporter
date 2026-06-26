@@ -2,7 +2,7 @@
 services:
   duplicacy-exporter:
     build: .
-    # image: drumsergio/duplicacy-exporter:0.5.0
+    # image: drumsergio/duplicacy-exporter:0.6.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -22,9 +22,20 @@ services:
       # --- General ---
       - LISTEN_PORT=9750
       - LOG_LEVEL=INFO
+
+      # --- Durable metric state (on by default; issue duplicacy-ha#12) ---
+      # The last completed backup/storage/prune values are saved here and
+      # reloaded on startup, so Home Assistant sensors keep their values across
+      # an exporter restart instead of going unavailable until the next backup.
+      # Keep the /data volume below mounted so state also survives container
+      # re-creation (image upgrades). Set PERSIST_ENABLED=false to opt out.
+      # - STATE_FILE=/data/duplicacy_exporter_state.json
+      # - PERSIST_ENABLED=true
     volumes:
       # Share the log directory from your Duplicacy container
       - duplicacy-logs:/logs:ro
+      # Persist metric state across restarts and image upgrades
+      - duplicacy-exporter-data:/data
     ports:
       - "9750:9750"
 
@@ -32,3 +43,6 @@ volumes:
   duplicacy-logs:
     # Create this volume and mount it in your Duplicacy container as well,
     # writing logs to /logs/duplicacy.log
+  duplicacy-exporter-data:
+    # Holds duplicacy_exporter_state.json so metric values persist across
+    # restarts. On Unraid, replace with a bind mount to /mnt/user/appdata/...
