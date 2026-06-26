@@ -61,7 +61,7 @@ Deploy alongside your Duplicacy CLI container using a shared log volume:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.5.0
+    image: drumsergio/duplicacy-exporter:0.6.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -84,7 +84,7 @@ volumes:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.5.0
+    image: drumsergio/duplicacy-exporter:0.6.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -103,7 +103,7 @@ If you write Duplicacy logs to a file instead of using Docker:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.5.0
+    image: drumsergio/duplicacy-exporter:0.6.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -132,9 +132,12 @@ All configuration is done through environment variables:
 | `TAILSCALE_DOMAIN` | `mango-alpha.ts.net` | Tailscale domain suffix to strip from storage URLs |
 | `STORAGE_HOST_MAP` | _(empty)_ | JSON object mapping hostname/IP to display name |
 | `REPLAY_HOURS` | `25` | Hours of Docker log history to replay on startup |
-| `TIMESTAMP_FILE` | `/tmp/duplicacy_exporter_last_ts` | File to persist last-seen log timestamp (avoids counter double-count on restart) |
+| `TIMESTAMP_FILE` | `/data/duplicacy_exporter_last_ts` | File to persist last-seen log timestamp (avoids counter double-count on restart). Co-located with `STATE_FILE` under `/data` so one volume persists both. |
 | `MAX_LOG_BUFFER` | `1048576` | Maximum Docker log buffer size in bytes before discarding partial data (1 MB) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `PERSIST_ENABLED` | `true` | Save the last completed backup/storage/prune values to disk and reload them on startup, so metrics survive a restart (see [Persistence](#persistence-across-restarts)). Set to `false` to opt out. |
+| `STATE_FILE` | `/data/duplicacy_exporter_state.json` | Where the durable metric state is stored. Mount a volume at its directory so state survives container re-creation, not just restarts. |
+| `PERSIST_INTERVAL` | `15` | Seconds between state snapshots. A snapshot is only written when a value actually changed. |
 | `POLLER_ENABLED` | `false` | Enable the optional [storage poller](#storage-poller-optional). Truthy values: `1`, `true`, `yes`. Off by default. |
 | `POLLER_INTERVAL` | `86400` | Seconds between storage poller cycles (default 24h) |
 | `POLLER_REPOSITORIES` | _(empty)_ | JSON list of repositories to poll. Each item: `{"path": "...", "storage": "...", "snapshot_id": "..."}` (`path` required; `storage` defaults to `default`; `snapshot_id` optional) |
@@ -148,6 +151,30 @@ Map raw IPs or hostnames to friendly names:
 ```bash
 STORAGE_HOST_MAP='{"192.168.10.100":"watchtower","192.168.20.5":"geiserct"}'
 ```
+
+### Persistence across restarts
+
+Prometheus metrics live only in memory, so without persistence a restart wipes
+them: in `webhook` mode the values stay gone until the *next* backup reports,
+which can leave Home Assistant sensors `unavailable`/`unknown` for hours.
+
+Persistence is **on by default**. The last completed backup, storage-poller and
+prune values are snapshotted to `STATE_FILE` (default `/data/duplicacy_exporter_state.json`)
+and reloaded on startup, so `/metrics` re-serves them immediately. Only durable
+"last completed" values are persisted — the real-time progress gauges
+(`*_running`, `*_speed_*`, `*_progress_*`, live chunk counts) are not, since they
+reflect an in-flight backup and settle from live data within one cycle.
+
+Mount a volume at the state file's directory so it also survives container
+**re-creation** (image upgrades), not just a `docker restart`:
+
+```yaml
+    volumes:
+      - duplicacy-exporter-data:/data   # or a bind mount, e.g. /mnt/user/appdata/duplicacy-exporter:/data
+```
+
+If the directory is not writable the exporter logs one warning and continues
+without persistence (metrics still work, they just won't survive a restart).
 
 ## Metrics
 
@@ -348,6 +375,12 @@ Import it in Grafana via **Dashboards → Import → Upload JSON file** or use t
 - Set `LOG_LEVEL=DEBUG` to see how each log line is parsed and which labels are resolved.
 - If storage targets show as raw IPs, use `STORAGE_HOST_MAP` to map them to friendly names.
 - If machine name is missing, set `MACHINE_NAME` explicitly.
+
+### Metrics (or HA sensors) disappear after restarting the exporter
+
+- Persistence is on by default — confirm `STATE_FILE`'s directory is a **writable mounted volume** (default `/data`). Without a volume the state is lost when the container is re-created on an image upgrade.
+- Check the logs for `Disabling metric persistence; cannot write …`: the directory isn't writable. Mount a volume or set `STATE_FILE` to a writable path.
+- See [Persistence across restarts](#persistence-across-restarts) for details.
 
 ### Docker socket permission denied
 

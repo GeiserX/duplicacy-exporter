@@ -1,5 +1,5 @@
 """
-Duplicacy Prometheus Exporter v0.5.0
+Duplicacy Prometheus Exporter v0.6.0
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 
@@ -10,15 +10,22 @@ Modes:
 Optional storage poller (opt-in, off by default): periodically runs the
 duplicacy CLI ``list`` / ``check`` commands to export storage size and revision
 counts, which the Web UI webhook payload cannot carry.
+
+Durable metric state (on by default): the last completed backup / storage / prune
+values are snapshotted to ``STATE_FILE`` and reloaded on startup, so a restart no
+longer leaves Home Assistant sensors unavailable until the next backup runs
+(issue duplicacy-ha#12).
 """
 
 import json
 import logging
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -33,7 +40,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -51,7 +58,11 @@ MACHINE_NAME = os.getenv("MACHINE_NAME", "")
 SNAPSHOT_ID = os.getenv("SNAPSHOT_ID", "")
 TAILSCALE_DOMAIN = os.getenv("TAILSCALE_DOMAIN", "mango-alpha.ts.net")
 REPLAY_HOURS = int(os.getenv("REPLAY_HOURS", "25"))
-TIMESTAMP_FILE = os.getenv("TIMESTAMP_FILE", "/tmp/duplicacy_exporter_last_ts")
+# Co-located with STATE_FILE under /data on purpose: the log_tail replay-skip
+# guard (this timestamp) and the restored cumulative counters must share the same
+# durability boundary, otherwise a container re-create that keeps /data but drops
+# /tmp would replay already-counted log lines on top of restored totals.
+TIMESTAMP_FILE = os.getenv("TIMESTAMP_FILE", "/data/duplicacy_exporter_last_ts")
 MAX_LOG_BUFFER = int(os.getenv("MAX_LOG_BUFFER", str(1024 * 1024)))  # 1 MB
 
 # --- Optional storage poller (opt-in, off by default) ---------------------
@@ -63,6 +74,16 @@ POLLER_ENABLED = os.getenv("POLLER_ENABLED", "").strip().lower() in {"1", "true"
 POLLER_INTERVAL = int(os.getenv("POLLER_INTERVAL", "86400"))  # seconds between cycles
 DUPLICACY_BIN = os.getenv("DUPLICACY_BIN", "duplicacy")
 POLLER_TIMEOUT = int(os.getenv("POLLER_TIMEOUT", "1800"))  # per-command timeout (seconds)
+
+# --- Durable metric state (on by default) ---------------------------------
+# Prometheus metrics live only in memory, so a restart wipes them and HA sensors
+# go unavailable/unknown until the next backup reports (issue duplicacy-ha#12).
+# We snapshot the durable "last completed" values to STATE_FILE and reload them
+# on startup. Mount a volume at STATE_FILE's directory (default /data) so the
+# state also survives container re-creation (image upgrades), not just restarts.
+PERSIST_ENABLED = os.getenv("PERSIST_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
+STATE_FILE = os.getenv("STATE_FILE", "/data/duplicacy_exporter_state.json")
+PERSIST_INTERVAL = int(os.getenv("PERSIST_INTERVAL", "15"))  # seconds between snapshots
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -331,6 +352,164 @@ backups_seen = Counter(
     "labelled due to a missing snapshot_id/storage_target/machine",
     registry=registry,
 )
+
+# ---------------------------------------------------------------------------
+# Durable metric state (persist across restarts)
+# ---------------------------------------------------------------------------
+#
+# Maps each persisted metric's registry name (as emitted by
+# ``CollectorRegistry.collect()``) to its metric object. Note that a Counter
+# created with a ``_total`` suffix collects under the BASE name (prometheus_client
+# strips the suffix), so e.g. ``duplicacy_backup_bytes_uploaded_total`` is keyed
+# here as ``duplicacy_backup_bytes_uploaded``.
+#
+# Only DURABLE "last completed" values are persisted. The real-time progress
+# gauges (running / speed / progress / live chunk counters) and the version Info
+# are deliberately excluded: restoring a stale "running" or an old version would
+# be misleading, and those settle from live data within one cycle anyway.
+PERSISTED_METRICS = {
+    "duplicacy_backup_last_success_timestamp_seconds": last_success_ts,
+    "duplicacy_backup_last_duration_seconds": last_duration,
+    "duplicacy_backup_last_files_total": last_files_total,
+    "duplicacy_backup_last_files_new": last_files_new,
+    "duplicacy_backup_last_bytes_uploaded": last_bytes_uploaded,
+    "duplicacy_backup_last_bytes_new": last_bytes_new,
+    "duplicacy_backup_last_chunks_new": last_chunks_new,
+    "duplicacy_backup_last_exit_code": last_exit_code,
+    "duplicacy_backup_last_revision": last_revision,
+    "duplicacy_backup_last_files_size_bytes": last_files_size,
+    "duplicacy_backup_last_chunks_size_bytes": last_chunks_size,
+    "duplicacy_backup_bytes_uploaded": total_bytes_uploaded,  # Counter -> *_total
+    "duplicacy_storage_total_size_bytes": storage_total_size,
+    "duplicacy_storage_total_chunks": storage_total_chunks,
+    "duplicacy_snapshot_revisions": snapshot_revisions,
+    "duplicacy_snapshot_last_revision": snapshot_last_revision,
+    "duplicacy_poller_last_success_timestamp_seconds": poller_last_success_ts,
+    "duplicacy_poller_errors": poller_errors_total,  # Counter -> *_total
+    "duplicacy_prune_last_success_timestamp_seconds": last_prune_success_ts,
+    "duplicacy_exporter_last_activity_timestamp_seconds": exporter_last_activity_ts,
+    "duplicacy_exporter_backups_seen": backups_seen,  # Counter -> *_total
+}
+
+
+class MetricsPersistence:
+    """Snapshots durable metric values to disk and restores them on startup.
+
+    Prometheus metrics are held only in the in-memory registry, so a restart
+    drops them and HA sensors read nothing until the next backup reports
+    (issue duplicacy-ha#12). This keeps the last values across restarts.
+
+    ``save()`` writes only when the snapshot actually changed (cheap when idle)
+    and is atomic (temp file + ``os.replace``). Any I/O failure disables
+    persistence with a single actionable log line instead of crashing or
+    spamming -- e.g. when STATE_FILE's directory is not a writable volume.
+    """
+
+    def __init__(self, path, registry, metrics, interval=PERSIST_INTERVAL):
+        self.path = path
+        self.registry = registry
+        self.metrics = metrics  # registry-name -> metric object
+        self.interval = interval
+        self._last_serialized = None
+        self._failed = False
+        self._lock = threading.Lock()
+
+    def snapshot(self) -> list:
+        """Current durable metric values as a list of {name, labels, value}."""
+        records = []
+        for metric in self.registry.collect():
+            if metric.name not in self.metrics:
+                continue
+            for sample in metric.samples:
+                # ``_created`` samples are timestamps, not values -- skip them.
+                if sample.name.endswith("_created"):
+                    continue
+                records.append({
+                    "name": metric.name,
+                    "labels": dict(sample.labels),
+                    "value": sample.value,
+                })
+        return records
+
+    def save(self) -> bool:
+        """Atomically persist the snapshot if it changed. Never raises."""
+        if self._failed:
+            return False
+        try:
+            serialized = json.dumps(self.snapshot(), sort_keys=True)
+            with self._lock:
+                if serialized == self._last_serialized:
+                    return False
+                directory = os.path.dirname(os.path.abspath(self.path)) or "."
+                os.makedirs(directory, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+                try:
+                    with os.fdopen(fd, "w") as handle:
+                        handle.write(serialized)
+                    os.replace(tmp, self.path)
+                finally:
+                    if os.path.exists(tmp):
+                        try:
+                            os.unlink(tmp)
+                        except OSError:
+                            pass
+                self._last_serialized = serialized
+            return True
+        except OSError as exc:
+            self._failed = True
+            logger.warning(
+                "Disabling metric persistence; cannot write %s (%s). Mount a "
+                "writable volume at its directory to enable.", self.path, exc)
+            return False
+
+    def restore(self) -> int:
+        """Load and re-apply persisted values. Call ONCE before metrics update."""
+        try:
+            with open(self.path) as handle:
+                records = json.load(handle)
+        except FileNotFoundError:
+            logger.info("No persisted metric state at %s (first run)", self.path)
+            return 0
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("Ignoring unreadable metric state %s: %s", self.path, exc)
+            return 0
+        if not isinstance(records, list):
+            logger.warning("Metric state %s is not a list; ignoring", self.path)
+            return 0
+
+        restored = 0
+        for record in records:
+            try:
+                name = record["name"]
+                labels = record.get("labels") or {}
+                value = float(record["value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            metric = self.metrics.get(name)
+            if metric is None:
+                continue
+            try:
+                child = metric.labels(**labels) if labels else metric
+                if isinstance(metric, Counter):
+                    if value <= 0:
+                        continue  # nothing to restore; a fresh counter is already 0
+                    child.inc(value)
+                else:
+                    child.set(value)
+                restored += 1
+            except (ValueError, TypeError) as exc:
+                logger.warning("Could not restore %s%s: %s", name, labels, exc)
+        logger.info("Restored %d persisted metric series from %s", restored, self.path)
+        return restored
+
+    def run_forever(self):
+        """Background loop: persist changed state every ``interval`` seconds."""
+        logger.info("Metric persistence active: %s (every %ds)",
+                    self.path, self.interval)
+        while not self._failed:
+            time.sleep(self.interval)
+            self.save()
+
 
 # ---------------------------------------------------------------------------
 # Parsing helpers
@@ -1105,6 +1284,17 @@ def main():
 
     state = BackupState()
 
+    # Reload durable metric state BEFORE any thread updates metrics, so /metrics
+    # serves the last values immediately on restart (issue duplicacy-ha#12).
+    persistence = None
+    if PERSIST_ENABLED:
+        persistence = MetricsPersistence(
+            STATE_FILE, registry, PERSISTED_METRICS, PERSIST_INTERVAL)
+        persistence.restore()
+        persistence.save()  # write initial state + surface any write error early
+        if not persistence._failed:
+            threading.Thread(target=persistence.run_forever, daemon=True).start()
+
     if MODE == "log_tail":
         if LOG_FILE:
             tailer = threading.Thread(
@@ -1140,10 +1330,19 @@ def main():
     logger.info("Serving metrics on http://0.0.0.0:%d/metrics", LISTEN_PORT)
     logger.info("Webhook endpoint: http://0.0.0.0:%d%s", LISTEN_PORT, WEBHOOK_PATH)
 
+    # Translate SIGTERM (docker stop / restart) into the same graceful path as
+    # Ctrl-C so the final state snapshot is written on container shutdown.
+    def _graceful_shutdown(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down...")
+        if persistence is not None:
+            persistence.save()
         server.shutdown()
 
 
