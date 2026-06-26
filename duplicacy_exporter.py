@@ -1,17 +1,23 @@
 """
-Duplicacy Prometheus Exporter v0.4.0
+Duplicacy Prometheus Exporter v0.5.0
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 
 Modes:
   - log_tail: Tails Docker container logs (or a log file) for real-time metrics
   - webhook:  Receives POST from Duplicacy Web UI report_url
+
+Optional storage poller (opt-in, off by default): periodically runs the
+duplicacy CLI ``list`` / ``check`` commands to export storage size and revision
+counts, which the Web UI webhook payload cannot carry.
 """
 
 import json
 import logging
 import os
 import re
+import socket
+import subprocess
 import sys
 import threading
 import time
@@ -27,7 +33,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -47,6 +53,16 @@ TAILSCALE_DOMAIN = os.getenv("TAILSCALE_DOMAIN", "mango-alpha.ts.net")
 REPLAY_HOURS = int(os.getenv("REPLAY_HOURS", "25"))
 TIMESTAMP_FILE = os.getenv("TIMESTAMP_FILE", "/tmp/duplicacy_exporter_last_ts")
 MAX_LOG_BUFFER = int(os.getenv("MAX_LOG_BUFFER", str(1024 * 1024)))  # 1 MB
+
+# --- Optional storage poller (opt-in, off by default) ---------------------
+# The Duplicacy Web UI webhook cannot carry storage size or revision counts.
+# When enabled, the poller runs the duplicacy CLI to collect them. It needs the
+# duplicacy binary plus storage credentials / an initialised repository inside
+# the exporter container, so it is disabled unless POLLER_ENABLED is truthy.
+POLLER_ENABLED = os.getenv("POLLER_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+POLLER_INTERVAL = int(os.getenv("POLLER_INTERVAL", "86400"))  # seconds between cycles
+DUPLICACY_BIN = os.getenv("DUPLICACY_BIN", "duplicacy")
+POLLER_TIMEOUT = int(os.getenv("POLLER_TIMEOUT", "1800"))  # per-command timeout (seconds)
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -74,6 +90,41 @@ def _load_storage_host_map() -> dict:
         return {}
 
 _STORAGE_HOST_MAP = _load_storage_host_map()
+
+
+def _load_poller_repositories() -> list:
+    """Parse POLLER_REPOSITORIES env var: JSON list of repository descriptors.
+
+    Each item is an object: {"path": str (required),
+                             "storage": str (optional, default "default"),
+                             "snapshot_id": str (optional)}.
+    Returns [] (with a warning) on invalid JSON or a non-list value.
+    """
+    raw = os.getenv("POLLER_REPOSITORIES", "")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Invalid POLLER_REPOSITORIES JSON, ignoring")
+        return []
+    if not isinstance(parsed, list):
+        logger.warning("POLLER_REPOSITORIES must be a JSON list, ignoring")
+        return []
+    return parsed
+
+
+def _get_first(payload: dict, *keys, default=0):
+    """Return the first present, non-None value among ``keys`` in ``payload``.
+
+    Duplicacy's report payloads occasionally rename or omit fields; this picks
+    the first usable alias and falls back to ``default`` when none are present.
+    """
+    for key in keys:
+        value = payload.get(key)
+        if value is not None:
+            return value
+    return default
 
 
 def _extract_storage_target(url: str) -> str:
@@ -205,6 +256,55 @@ total_bytes_uploaded = Counter(
     "duplicacy_backup_bytes_uploaded_total",
     "Total bytes uploaded across all backup runs",
     BACKUP_LABELS, registry=registry,
+)
+last_files_size = Gauge(
+    "duplicacy_backup_last_files_size_bytes",
+    "Total logical size of all files in the last backup snapshot",
+    BACKUP_LABELS, registry=registry,
+)
+last_chunks_size = Gauge(
+    "duplicacy_backup_last_chunks_size_bytes",
+    "Total size of chunks referenced by the last backup "
+    "(compressed; NOT deduplicated across revisions)",
+    BACKUP_LABELS, registry=registry,
+)
+
+# --- Storage poller metrics (only populated when the poller is enabled) ----
+STORAGE_LABELS = ["storage_target", "machine"]
+SNAPSHOT_LABELS = ["snapshot_id", "storage_target", "machine"]
+
+storage_total_size = Gauge(
+    "duplicacy_storage_total_size_bytes",
+    "Total size of all chunks in the storage as reported by `duplicacy check` "
+    "(approximate; reconstructed from Duplicacy's human-readable size formatting)",
+    STORAGE_LABELS, registry=registry,
+)
+storage_total_chunks = Gauge(
+    "duplicacy_storage_total_chunks",
+    "Total number of chunks in the storage as reported by `duplicacy check`",
+    STORAGE_LABELS, registry=registry,
+)
+snapshot_revisions = Gauge(
+    "duplicacy_snapshot_revisions",
+    "Number of revisions for a snapshot id as reported by `duplicacy list`",
+    SNAPSHOT_LABELS, registry=registry,
+)
+snapshot_last_revision = Gauge(
+    "duplicacy_snapshot_last_revision",
+    "Highest (latest) revision number for a snapshot id as reported by "
+    "`duplicacy list`",
+    SNAPSHOT_LABELS, registry=registry,
+)
+poller_last_success_ts = Gauge(
+    "duplicacy_poller_last_success_timestamp_seconds",
+    "Unix timestamp of the last fully successful storage poller cycle",
+    registry=registry,
+)
+poller_errors_total = Counter(
+    "duplicacy_poller_errors_total",
+    "Total number of storage poller errors (missing binary, timeout, or "
+    "parse failure) across all cycles",
+    registry=registry,
 )
 
 prune_running = Gauge(
@@ -598,6 +698,8 @@ class WebhookHandler:
         self.state = state
 
     def handle(self, payload: dict):
+        logger.debug("Webhook raw payload: %s", json.dumps(payload, sort_keys=True))
+
         machine = payload.get("computer", MACHINE_NAME or "unknown")
         storage = payload.get("storage", payload.get("storage_url", ""))
         storage_target = _extract_storage_target(storage) if storage else "unknown"
@@ -617,6 +719,13 @@ class WebhookHandler:
         )
         labels = (snapshot_id, storage_target, machine)
 
+        logger.info("Webhook resolved: snapshot_id=%s storage=%s machine=%s",
+                     snapshot_id, storage_target, machine)
+        if "directory" not in payload:
+            logger.warning(
+                "Webhook payload has no 'directory' - backups to one storage "
+                "cannot be told apart; got keys=%s", sorted(payload))
+
         result = payload.get("result", "")
         exit_code = 0 if result.lower() == "success" else 1
         last_exit_code.labels(*labels).set(exit_code)
@@ -633,9 +742,13 @@ class WebhookHandler:
         last_files_new.labels(*labels).set(payload.get("new_files", 0))
         last_chunks_new.labels(*labels).set(payload.get("new_chunks", 0))
 
-        uploaded = payload.get("uploaded_chunk_size", 0)
+        # The Web UI report field is `upload_chunk_size` (no "d"); accept the
+        # historical `uploaded_chunk_size` spelling too for forward/backward safety.
+        uploaded = _get_first(payload, "upload_chunk_size", "uploaded_chunk_size")
         last_bytes_uploaded.labels(*labels).set(uploaded)
         last_bytes_new.labels(*labels).set(payload.get("new_file_size", 0))
+        last_files_size.labels(*labels).set(_get_first(payload, "total_file_size"))
+        last_chunks_size.labels(*labels).set(_get_first(payload, "total_chunk_size"))
         if uploaded > 0:
             total_bytes_uploaded.labels(*labels).inc(uploaded)
 
@@ -648,6 +761,164 @@ class WebhookHandler:
 
         logger.info("Webhook: %s result=%s uploaded=%d duration=%ds",
                      snapshot_id, result, uploaded, duration)
+
+
+# ---------------------------------------------------------------------------
+# Storage poller (opt-in): runs the duplicacy CLI for storage size + revisions
+# ---------------------------------------------------------------------------
+#
+# Output formats are taken from the duplicacy source (src/duplicacy_*.go):
+#   list:  "Snapshot <id> revision <n> created at 2006-01-02 15:04 ..."
+#   check: "<N> snapshots and <M> revisions"
+#          "Total chunk size is <PrettyNumber> in <C> chunks"
+# With `-log` each line is prefixed by "<ts> <LEVEL> <LOGID> ", e.g.
+#   "2025-10-15 12:49:01.234 INFO SNAPSHOT_INFO Snapshot home revision 5 ..."
+# so the regexes below are unanchored (re.search) and tolerate the prefix.
+
+RE_LIST_REVISION = re.compile(
+    r"Snapshot\s+(?P<snapshot_id>\S+)\s+revision\s+(?P<revision>\d+)\s+created at"
+)
+RE_CHECK_TOTAL = re.compile(
+    r"Total chunk size is\s+(?P<size>[\d,.]+[KMGT]?)\s+in\s+(?P<chunks>[\d,]+)\s+chunks"
+)
+
+# Duplicacy's PrettyNumber (src/duplicacy_utils.go) formats sizes irregularly:
+#   >1000G -> "<n>G"; >G -> "<a>,<bbb>M"; >M -> "<a>,<bbb>K"; >K -> "<n>K"; else "<n>".
+# The comma in the M/K branches separates the high group from the low three
+# digits (it is NOT general thousands grouping), so we re-multiply head*1000+tail.
+_SIZE_MULTIPLIERS = {"": 1, "K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}
+
+
+def _parse_pretty_size(token: str) -> float:
+    """Convert a Duplicacy PrettyNumber size token (e.g. "1,234M") to bytes.
+
+    Reverses Duplicacy's lossy human formatting, so the result is approximate
+    (worst case ~0.65% low due to integer truncation inside Duplicacy). Also
+    tolerates plain decimal forms like "5.6G" and bare comma-grouped integers.
+    """
+    token = token.strip()
+    unit = ""
+    if token and token[-1] in "KMGT":
+        unit = token[-1]
+        token = token[:-1]
+    if "," in token:
+        head, tail = token.rsplit(",", 1)
+        value = int(head.replace(",", "")) * 1000 + int(tail)
+    elif "." in token:
+        value = float(token)
+    else:
+        value = int(token)
+    return value * _SIZE_MULTIPLIERS[unit]
+
+
+def _parse_list_output(text: str) -> dict:
+    """Parse `duplicacy list` output into {snapshot_id: (count, last_revision)}.
+
+    ``count`` is the number of revision lines seen for that id; ``last_revision``
+    is the highest revision number observed.
+    """
+    result: dict = {}
+    for line in text.splitlines():
+        m = RE_LIST_REVISION.search(line)
+        if not m:
+            continue
+        sid = m.group("snapshot_id")
+        rev = int(m.group("revision"))
+        count, last = result.get(sid, (0, 0))
+        result[sid] = (count + 1, max(last, rev))
+    return result
+
+
+def _parse_check_stats(text: str) -> tuple:
+    """Parse `duplicacy check -stats` output into (total_chunks, total_bytes).
+
+    Reads the "Total chunk size is <size> in <N> chunks" summary line. Raises
+    ValueError if that line is absent (so a failed/garbled run is not silently
+    recorded as zero).
+    """
+    for line in text.splitlines():
+        m = RE_CHECK_TOTAL.search(line)
+        if not m:
+            continue
+        total_chunks = int(m.group("chunks").replace(",", ""))
+        total_bytes = _parse_pretty_size(m.group("size"))
+        return total_chunks, total_bytes
+    raise ValueError("no 'Total chunk size is ... in ... chunks' line in check output")
+
+
+class StoragePoller:
+    """Daemon that periodically queries the duplicacy CLI per configured repo.
+
+    For each repository it runs ``duplicacy -log list`` (revision counts) and
+    ``duplicacy -log check -tabular -stats`` (storage size + chunk count), then
+    publishes the parsed values as Prometheus metrics. Any failure increments
+    ``duplicacy_poller_errors_total`` and is logged; the loop never raises out.
+    """
+
+    def __init__(self, repositories: list, interval: int = POLLER_INTERVAL):
+        self.repositories = repositories
+        self.interval = interval
+        self.machine = MACHINE_NAME or socket.gethostname()
+
+    def _poll_repository(self, repo: dict):
+        """Run list + check for one repo and set its metrics. Raises on failure."""
+        path = repo["path"]
+        storage_target = repo.get("storage", "default")
+
+        list_cmd = [DUPLICACY_BIN, "-log", "list"]
+        check_cmd = [DUPLICACY_BIN, "-log", "check", "-tabular", "-stats"]
+        snapshot_id = repo.get("snapshot_id")
+        if snapshot_id:
+            list_cmd += ["-id", snapshot_id]
+            check_cmd += ["-id", snapshot_id]
+        else:
+            list_cmd.append("-all")
+
+        list_proc = subprocess.run(
+            list_cmd, timeout=POLLER_TIMEOUT, capture_output=True,
+            text=True, cwd=path,
+        )
+        revisions = _parse_list_output(list_proc.stdout)
+        for sid, (count, last_rev) in revisions.items():
+            sl = (sid, storage_target, self.machine)
+            snapshot_revisions.labels(*sl).set(count)
+            snapshot_last_revision.labels(*sl).set(last_rev)
+
+        check_proc = subprocess.run(
+            check_cmd, timeout=POLLER_TIMEOUT, capture_output=True,
+            text=True, cwd=path,
+        )
+        total_chunks, total_bytes = _parse_check_stats(check_proc.stdout)
+        storage_total_chunks.labels(storage_target, self.machine).set(total_chunks)
+        storage_total_size.labels(storage_target, self.machine).set(total_bytes)
+
+        logger.info(
+            "Poller: %s (storage=%s) chunks=%d bytes=%d snapshots=%d",
+            path, storage_target, total_chunks, total_bytes, len(revisions))
+
+    def run_once(self):
+        """Run one poll cycle over all repositories. Never raises."""
+        all_ok = True
+        for repo in self.repositories:
+            path = repo.get("path", "<missing>")
+            try:
+                self._poll_repository(repo)
+            except Exception as exc:  # noqa: BLE001 - poller must never crash
+                all_ok = False
+                poller_errors_total.inc()
+                logger.warning("Poller error for %s: %s", path, exc)
+        if all_ok and self.repositories:
+            poller_last_success_ts.set(time.time())
+
+    def run_forever(self):
+        """Poll loop for the daemon thread. Sleeps ``interval`` between cycles."""
+        logger.info("Storage poller started: %d repositor%s, interval=%ds",
+                    len(self.repositories),
+                    "y" if len(self.repositories) == 1 else "ies",
+                    self.interval)
+        while True:
+            self.run_once()
+            time.sleep(self.interval)
 
 
 # ---------------------------------------------------------------------------
@@ -847,6 +1118,20 @@ def main():
             )
         tailer.start()
         logger.info("Log tailer thread started")
+
+    if POLLER_ENABLED:
+        repositories = _load_poller_repositories()
+        if repositories:
+            poller = StoragePoller(repositories, POLLER_INTERVAL)
+            poller_thread = threading.Thread(
+                target=poller.run_forever, daemon=True
+            )
+            poller_thread.start()
+            logger.info("Storage poller thread started")
+        else:
+            logger.warning(
+                "POLLER_ENABLED is set but POLLER_REPOSITORIES is empty/invalid "
+                "- storage poller not started")
 
     webhook = WebhookHandler(state)
     MetricsHTTPHandler.webhook_handler = webhook

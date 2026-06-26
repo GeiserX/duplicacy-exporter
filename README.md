@@ -61,7 +61,7 @@ Deploy alongside your Duplicacy CLI container using a shared log volume:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.4.0
+    image: drumsergio/duplicacy-exporter:0.5.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -84,7 +84,7 @@ volumes:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.4.0
+    image: drumsergio/duplicacy-exporter:0.5.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -103,7 +103,7 @@ If you write Duplicacy logs to a file instead of using Docker:
 ```yaml
 services:
   duplicacy-exporter:
-    image: drumsergio/duplicacy-exporter:0.4.0
+    image: drumsergio/duplicacy-exporter:0.5.0
     container_name: duplicacy-exporter
     restart: unless-stopped
     environment:
@@ -135,6 +135,11 @@ All configuration is done through environment variables:
 | `TIMESTAMP_FILE` | `/tmp/duplicacy_exporter_last_ts` | File to persist last-seen log timestamp (avoids counter double-count on restart) |
 | `MAX_LOG_BUFFER` | `1048576` | Maximum Docker log buffer size in bytes before discarding partial data (1 MB) |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `POLLER_ENABLED` | `false` | Enable the optional [storage poller](#storage-poller-optional). Truthy values: `1`, `true`, `yes`. Off by default. |
+| `POLLER_INTERVAL` | `86400` | Seconds between storage poller cycles (default 24h) |
+| `POLLER_REPOSITORIES` | _(empty)_ | JSON list of repositories to poll. Each item: `{"path": "...", "storage": "...", "snapshot_id": "..."}` (`path` required; `storage` defaults to `default`; `snapshot_id` optional) |
+| `DUPLICACY_BIN` | `duplicacy` | Path to the duplicacy CLI binary used by the poller |
+| `POLLER_TIMEOUT` | `1800` | Per-command timeout in seconds for `duplicacy list` / `check` |
 
 ### Storage host mapping example
 
@@ -178,6 +183,8 @@ the `SNAPSHOT_ID` env var.
 | `duplicacy_backup_last_bytes_uploaded` | Gauge | Bytes uploaded in last backup |
 | `duplicacy_backup_last_bytes_new` | Gauge | New bytes in last backup |
 | `duplicacy_backup_last_chunks_new` | Gauge | New chunks in last backup |
+| `duplicacy_backup_last_files_size_bytes` | Gauge | Total logical size of all files in the last backup snapshot (webhook: `total_file_size`) |
+| `duplicacy_backup_last_chunks_size_bytes` | Gauge | Total size of chunks referenced by the last backup, compressed and **not** deduplicated across revisions (webhook: `total_chunk_size`) |
 | `duplicacy_backup_last_exit_code` | Gauge | Exit code: 0 = success, 1 = failure |
 | `duplicacy_backup_last_revision` | Gauge | Revision number of last backup |
 | `duplicacy_backup_bytes_uploaded_total` | Counter | Cumulative bytes uploaded across all runs |
@@ -195,6 +202,88 @@ the `SNAPSHOT_ID` env var.
 |--------|------|-------------|
 | `duplicacy_exporter_last_activity_timestamp_seconds` | Gauge | Unix timestamp of the last log line parsed (alert if it goes stale) |
 | `duplicacy_exporter_backups_seen_total` | Counter | Completed backups detected, including any dropped for a missing `snapshot_id`/`storage_target`/`machine`. If this climbs while labelled series stay empty, the exporter is seeing backups it can't label — set `SNAPSHOT_ID`/`MACHINE_NAME`. |
+
+### Storage poller (optional, opt-in)
+
+Only populated when the [storage poller](#storage-poller-optional) is enabled.
+Storage metrics carry labels `storage_target`, `machine`; snapshot metrics carry
+`snapshot_id`, `storage_target`, `machine`.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `duplicacy_storage_total_size_bytes` | Gauge | Total size of all chunks in the storage, from `duplicacy check`. Approximate — reconstructed from Duplicacy's human-readable size formatting (worst case ~0.65% low). |
+| `duplicacy_storage_total_chunks` | Gauge | Total number of chunks in the storage, from `duplicacy check` |
+| `duplicacy_snapshot_revisions` | Gauge | Number of revisions for a snapshot id, from `duplicacy list` |
+| `duplicacy_snapshot_last_revision` | Gauge | Highest (latest) revision number for a snapshot id, from `duplicacy list` |
+| `duplicacy_poller_last_success_timestamp_seconds` | Gauge | Unix timestamp of the last fully successful poller cycle |
+| `duplicacy_poller_errors_total` | Counter | Poller errors (missing binary, timeout, or parse failure) across all cycles |
+
+## Webhook payload
+
+In `webhook` mode the exporter consumes Duplicacy **Web UI's** `report_url` POST.
+That report is a single flat JSON object and is sent **only for backups** (not for
+prune, copy, or check). It carries these 26 fields:
+
+| Field | Meaning |
+|-------|---------|
+| `computer` | Machine name (used for the `machine` label) |
+| `directory` | Source directory backed up (the per-backup differentiator → `snapshot_id`) |
+| `start_time`, `end_time` | Unix timestamps; their difference is the duration |
+| `result` | `"Success"` or `"Error"` (capitalized) |
+| `storage`, `storage_url` | Destination storage URL (used for the `storage_target` label) |
+| `total_files`, `new_files` | File counts (total / new this revision) |
+| `total_file_size`, `new_file_size` | Logical file bytes (total / new) |
+| `total_chunks`, `new_chunks` | Chunk counts (total / new) |
+| `total_chunk_size`, `new_chunk_size` | Chunk bytes after compression (total / new) |
+| `total_file_chunks`, `new_file_chunks` | File-content chunk counts |
+| `total_file_chunk_size`, `new_file_chunk_size` | File-content chunk bytes |
+| `total_metadata_chunks`, `new_metadata_chunks` | Metadata chunk counts |
+| `total_metadata_chunk_size`, `new_metadata_chunk_size` | Metadata chunk bytes |
+| `upload_chunk_size` | **Bytes actually uploaded** this run (note: no "d" — `upload`, not `uploaded`) |
+| `upload_file_chunk_size`, `upload_metadata_chunk_size` | Uploaded file / metadata chunk bytes |
+
+> **There is no `id`, `snapshot_id`, `revision`, `prune`, or storage-size field in
+> this payload.** The exporter differentiates backups by `directory`, and uses the
+> poller (below) for storage size and revision counts.
+
+## Storage poller (optional)
+
+The Web UI webhook **cannot** carry storage size or revision counts. The optional
+storage poller fills that gap by periodically running the duplicacy CLI:
+
+- `duplicacy -log list -all` → revision count and latest revision per snapshot id
+- `duplicacy -log check -tabular -stats` → total chunk count and total storage size
+
+Enable it with `POLLER_ENABLED=true` and a `POLLER_REPOSITORIES` JSON list:
+
+```yaml
+environment:
+  - POLLER_ENABLED=true
+  - POLLER_INTERVAL=86400          # once a day
+  - POLLER_REPOSITORIES=[{"path":"/repos/photos","storage":"watchtower","snapshot_id":"photos"}]
+volumes:
+  - /srv/duplicacy/photos:/repos/photos   # an initialised duplicacy repository
+```
+
+> **⚠️ Security & cost.** The poller **runs the `duplicacy` binary against your
+> storage**, so it needs the binary (bundled in the image) **plus storage
+> credentials and an initialised repository inside the exporter container**
+> (mount the repo's `.duplicacy` directory or provide credentials via the
+> environment). It is **opt-in and off by default** for this reason. `check` can
+> be **slow and costly** on remote storage (it lists every chunk), so keep
+> `POLLER_INTERVAL` large. The exporter still runs fine without the poller — the
+> bundled binary simply enables it.
+
+### What lives where
+
+| You want… | Use |
+|-----------|-----|
+| Per-run speed, progress, files, uploaded bytes | `log_tail` **or** `webhook` |
+| **Storage size** + **revision counts** | **poller** (not in the webhook) |
+| **Prune** completion tracking | `log_tail` (not in the webhook, not in the poller) |
+
+The storage-size value is **approximate**: Duplicacy's `check` prints sizes in a
+lossy human format (e.g. `5,120M`), which the exporter converts back to bytes.
 
 ## Endpoints
 

@@ -38,6 +38,7 @@ ignore:
   - "setup.cfg"
   - "**/*.config.*"
 
-# Per-line coverage exclusion not supported by codecov, but
-# tail_docker_logs (lines 652-707) uses internal AF_UNIX sockets
-# that cannot be reliably unit-tested. Coverage is 90%+ without it.
+# Per-line coverage exclusion not supported by codecov, but a few lines in
+# tail_docker_logs use internal AF_UNIX sockets that cannot be reliably
+# unit-tested, plus the `if __name__ == "__main__"` guard. Coverage is 99%+
+# without them.

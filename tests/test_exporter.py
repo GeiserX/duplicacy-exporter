@@ -15,17 +15,23 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from duplicacy_exporter import (
     _extract_storage_target,
     _basename,
+    _get_first,
     _load_storage_host_map,
+    _load_poller_repositories,
     _load_last_timestamp,
     _save_last_timestamp,
     _parse_size,
     _parse_speed,
     _parse_duration,
     _parse_docker_timestamp,
+    _parse_pretty_size,
+    _parse_list_output,
+    _parse_check_stats,
     tail_docker_logs,
     BackupState,
     WebhookHandler,
     MetricsHTTPHandler,
+    StoragePoller,
     RE_CHUNK_LINE,
     RE_STORAGE_SET,
     RE_BACKUP_END,
@@ -47,15 +53,30 @@ from duplicacy_exporter import (
     last_bytes_uploaded,
     last_bytes_new,
     last_chunks_new,
+    last_files_size,
+    last_chunks_size,
     last_exit_code,
     last_revision,
     total_bytes_uploaded,
+    storage_total_size,
+    storage_total_chunks,
+    snapshot_revisions,
+    snapshot_last_revision,
+    poller_last_success_ts,
+    poller_errors_total,
     prune_running,
     last_prune_success_ts,
     backups_seen,
     exporter_last_activity_ts,
     TIMESTAMP_FILE,
 )
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _load_webui_report():
+    """Load the canonical 26-field Duplicacy Web UI report fixture."""
+    return json.loads((FIXTURES / "webui_report.json").read_text())
 
 
 # =========================================================================
@@ -1657,3 +1678,385 @@ class TestMainMachineWarning:
                             "MACHINE_NAME is not set" in str(c.args[0])
                             for c in warn.call_args_list
                         )
+
+
+# =========================================================================
+# _get_first (v0.5.0)
+# =========================================================================
+
+class TestGetFirst:
+    def test_returns_first_present(self):
+        assert _get_first({"a": 5, "b": 9}, "a", "b") == 5
+
+    def test_skips_missing_key(self):
+        assert _get_first({"b": 9}, "a", "b") == 9
+
+    def test_skips_none_value(self):
+        """A present-but-None value is treated as absent."""
+        assert _get_first({"a": None, "b": 9}, "a", "b") == 9
+
+    def test_default_when_all_absent(self):
+        assert _get_first({}, "a", "b") == 0
+
+    def test_custom_default(self):
+        assert _get_first({}, "a", default=-1) == -1
+
+    def test_zero_is_returned_not_skipped(self):
+        """0 is a real value and must be returned (not treated like None)."""
+        assert _get_first({"a": 0}, "a", default=99) == 0
+
+    def test_upload_chunk_size_preferred_over_legacy(self):
+        """The real `upload_chunk_size` wins over the buggy `uploaded_chunk_size`."""
+        payload = {"upload_chunk_size": 123, "uploaded_chunk_size": 999}
+        assert _get_first(payload, "upload_chunk_size", "uploaded_chunk_size") == 123
+
+
+# =========================================================================
+# Webhook with the real Duplicacy Web UI report payload (v0.5.0)
+# =========================================================================
+
+class TestWebhookRealPayload:
+    """Drive the handler with the canonical 26-field report_url payload."""
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "")
+    def test_real_payload_sets_nonzero_byte_metrics(self):
+        state = BackupState()
+        handler = WebhookHandler(state)
+        payload = _load_webui_report()
+        handler.handle(payload)
+
+        # snapshot_id falls back to the directory basename ("photos").
+        labels = ("photos", "watchtower", "mac-mini")
+        # The real field is upload_chunk_size (no "d"); the old code read
+        # uploaded_chunk_size and always recorded 0. Assert it is non-zero now.
+        assert last_bytes_uploaded.labels(*labels)._value.get() == 104857600.0
+        assert last_files_size.labels(*labels)._value.get() == 10737418240.0
+        assert last_chunks_size.labels(*labels)._value.get() == 5368709120.0
+        assert last_exit_code.labels(*labels)._value.get() == 0.0
+        assert last_files_total.labels(*labels)._value.get() == 8500.0
+        assert last_duration.labels(*labels)._value.get() == 600.0
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "")
+    def test_real_payload_result_capitalized_success(self):
+        """Duplicacy reports `result: "Success"` (capitalized) -> exit_code 0."""
+        state = BackupState()
+        handler = WebhookHandler(state)
+        payload = _load_webui_report()
+        assert payload["result"] == "Success"
+        handler.handle(payload)
+        labels = ("photos", "watchtower", "mac-mini")
+        assert last_exit_code.labels(*labels)._value.get() == 0.0
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "")
+    def test_real_payload_result_capitalized_error(self):
+        """`result: "Error"` (capitalized) -> exit_code 1."""
+        state = BackupState()
+        handler = WebhookHandler(state)
+        payload = _load_webui_report()
+        payload["result"] = "Error"
+        payload["directory"] = "/Users/gchen/errored"
+        handler.handle(payload)
+        labels = ("errored", "watchtower", "mac-mini")
+        assert last_exit_code.labels(*labels)._value.get() == 1.0
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "")
+    def test_two_directories_distinct_series(self):
+        """Two backups differing only by `directory` produce distinct series."""
+        state = BackupState()
+        handler = WebhookHandler(state)
+        base = _load_webui_report()
+
+        a = dict(base, directory="/srv/alpha")
+        b = dict(base, directory="/srv/beta")
+        handler.handle(a)
+        handler.handle(b)
+
+        assert last_chunks_size.labels(
+            "alpha", "watchtower", "mac-mini")._value.get() == 5368709120.0
+        assert last_chunks_size.labels(
+            "beta", "watchtower", "mac-mini")._value.get() == 5368709120.0
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "")
+    def test_missing_directory_warns(self):
+        """A payload without `directory` warns that backups can't be told apart."""
+        import duplicacy_exporter
+        state = BackupState()
+        handler = WebhookHandler(state)
+        payload = _load_webui_report()
+        del payload["directory"]
+        with patch.object(duplicacy_exporter.logger, "warning") as warn:
+            handler.handle(payload)
+        assert any("no 'directory'" in str(c.args[0]) for c in warn.call_args_list)
+
+
+# =========================================================================
+# Poller parsers (v0.5.0) -- grounded in real duplicacy CLI output
+# =========================================================================
+#
+# Sample output captured from the duplicacy source format strings
+# (src/duplicacy_snapshotmanager.go + duplicacy_log.go). With `-log`, every
+# line is prefixed by "<ts> <LEVEL> <LOGID> ".
+
+LIST_SAMPLE = (
+    "2025-10-15 12:49:01.234 INFO SNAPSHOT_INFO Snapshot photos revision 1 created at 2024-09-01 03:00\n"
+    "2025-10-15 12:49:01.240 INFO SNAPSHOT_INFO Snapshot photos revision 2 created at 2024-09-02 03:00\n"
+    "2025-10-15 12:49:01.250 INFO SNAPSHOT_INFO Snapshot photos revision 5 created at 2024-09-05 03:00 tag1 -threads 4\n"
+    "2025-10-15 12:49:01.260 INFO SNAPSHOT_INFO Snapshot docs revision 3 created at 2024-09-05 04:00\n"
+)
+
+CHECK_SAMPLE = (
+    "2025-10-15 13:00:00.000 INFO SNAPSHOT_CHECK Listing all chunks\n"
+    "2025-10-15 13:00:05.000 INFO SNAPSHOT_CHECK 2 snapshots and 8 revisions\n"
+    "2025-10-15 13:00:05.100 INFO SNAPSHOT_CHECK Total chunk size is 5,120M in 1280 chunks\n"
+    "2025-10-15 13:00:05.200 INFO SNAPSHOT_CHECK All chunks referenced by snapshot photos at revision 5 exist\n"
+)
+
+
+class TestParsePrettySize:
+    def test_plain_bytes(self):
+        assert _parse_pretty_size("500") == 500
+
+    def test_kilobytes(self):
+        assert _parse_pretty_size("512K") == 512 * 1024
+
+    def test_comma_grouped_kilobytes(self):
+        # PrettyNumber "204,800K" == 200 MiB
+        assert _parse_pretty_size("204,800K") == 200 * 1024 ** 2
+
+    def test_comma_grouped_megabytes(self):
+        # PrettyNumber "5,120M" == 5 GiB exactly
+        assert _parse_pretty_size("5,120M") == 5 * 1024 ** 3
+
+    def test_gigabytes(self):
+        assert _parse_pretty_size("1500G") == 1500 * 1024 ** 3
+
+    def test_decimal_form_tolerated(self):
+        assert _parse_pretty_size("5.6G") == pytest.approx(5.6 * 1024 ** 3)
+
+    def test_strips_whitespace(self):
+        assert _parse_pretty_size("  4K ") == 4096
+
+
+class TestParseListOutput:
+    def test_counts_and_last_revision(self):
+        parsed = _parse_list_output(LIST_SAMPLE)
+        assert parsed["photos"] == (3, 5)
+        assert parsed["docs"] == (1, 3)
+
+    def test_ignores_unrelated_lines(self):
+        text = "random log line\n" + LIST_SAMPLE + "another line\n"
+        parsed = _parse_list_output(text)
+        assert set(parsed) == {"photos", "docs"}
+
+    def test_empty_output(self):
+        assert _parse_list_output("") == {}
+
+    def test_without_log_prefix(self):
+        """Bare lines (no `-log` timestamp prefix) also parse."""
+        text = "Snapshot home revision 7 created at 2024-01-01 00:00\n"
+        assert _parse_list_output(text) == {"home": (1, 7)}
+
+
+class TestParseCheckStats:
+    def test_total_chunks_and_bytes(self):
+        chunks, total_bytes = _parse_check_stats(CHECK_SAMPLE)
+        assert chunks == 1280
+        assert total_bytes == 5 * 1024 ** 3
+
+    def test_plain_bytes_summary(self):
+        text = "INFO SNAPSHOT_CHECK Total chunk size is 900 in 3 chunks\n"
+        chunks, total_bytes = _parse_check_stats(text)
+        assert chunks == 3
+        assert total_bytes == 900
+
+    def test_missing_summary_raises(self):
+        with pytest.raises(ValueError):
+            _parse_check_stats("nothing useful here\n")
+
+
+# =========================================================================
+# StoragePoller cycle (v0.5.0)
+# =========================================================================
+
+class TestStoragePoller:
+    @patch("duplicacy_exporter.MACHINE_NAME", "pollhost")
+    def test_successful_cycle_sets_metrics(self):
+        repo = {"path": "/repo/photos", "storage": "watchtower"}
+        poller = StoragePoller([repo], interval=1)
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            if "list" in cmd:
+                result.stdout = LIST_SAMPLE
+            else:
+                result.stdout = CHECK_SAMPLE
+            result.returncode = 0
+            return result
+
+        before_errors = poller_errors_total._value.get()
+        with patch("duplicacy_exporter.subprocess.run", side_effect=fake_run):
+            poller.run_once()
+
+        assert storage_total_chunks.labels("watchtower", "pollhost")._value.get() == 1280.0
+        assert storage_total_size.labels("watchtower", "pollhost")._value.get() == float(5 * 1024 ** 3)
+        assert snapshot_revisions.labels("photos", "watchtower", "pollhost")._value.get() == 3.0
+        assert snapshot_last_revision.labels("photos", "watchtower", "pollhost")._value.get() == 5.0
+        assert poller_last_success_ts._value.get() > 0
+        assert poller_errors_total._value.get() == before_errors  # no errors
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "pollhost")
+    def test_cycle_with_explicit_snapshot_id(self):
+        """A configured snapshot_id passes -id to both commands (no -all)."""
+        repo = {"path": "/repo/x", "storage": "wt", "snapshot_id": "photos"}
+        poller = StoragePoller([repo], interval=1)
+        seen_cmds = []
+
+        def fake_run(cmd, **kwargs):
+            seen_cmds.append(cmd)
+            result = MagicMock()
+            result.stdout = LIST_SAMPLE if "list" in cmd else CHECK_SAMPLE
+            return result
+
+        with patch("duplicacy_exporter.subprocess.run", side_effect=fake_run):
+            poller.run_once()
+
+        list_cmd = next(c for c in seen_cmds if "list" in c)
+        assert "-id" in list_cmd and "photos" in list_cmd
+        assert "-all" not in list_cmd
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "pollhost")
+    def test_error_cycle_increments_error_counter(self):
+        """A subprocess failure increments the error counter and does not raise."""
+        repo = {"path": "/repo/broken", "storage": "wt"}
+        poller = StoragePoller([repo], interval=1)
+        before_errors = poller_errors_total._value.get()
+        before_success = poller_last_success_ts._value.get()
+
+        with patch("duplicacy_exporter.subprocess.run",
+                   side_effect=FileNotFoundError("duplicacy: not found")):
+            poller.run_once()  # must not raise
+
+        assert poller_errors_total._value.get() == before_errors + 1
+        # success timestamp must NOT advance on a failed cycle
+        assert poller_last_success_ts._value.get() == before_success
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "pollhost")
+    def test_parse_error_increments_error_counter(self):
+        """Garbled check output (no summary line) is counted as an error."""
+        repo = {"path": "/repo/x", "storage": "wt"}
+        poller = StoragePoller([repo], interval=1)
+        before_errors = poller_errors_total._value.get()
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.stdout = LIST_SAMPLE if "list" in cmd else "garbage\n"
+            return result
+
+        with patch("duplicacy_exporter.subprocess.run", side_effect=fake_run):
+            poller.run_once()
+
+        assert poller_errors_total._value.get() == before_errors + 1
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "")
+    @patch("duplicacy_exporter.socket.gethostname", return_value="resolved-host")
+    def test_machine_falls_back_to_hostname(self, _gethostname):
+        """With no MACHINE_NAME, the poller uses socket.gethostname()."""
+        poller = StoragePoller([], interval=1)
+        assert poller.machine == "resolved-host"
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "pollhost")
+    def test_run_forever_single_cycle_then_stop(self):
+        """run_forever runs a cycle then sleeps; stop via the sleep call."""
+        repo = {"path": "/repo/x", "storage": "wt"}
+        poller = StoragePoller([repo], interval=1)
+
+        def fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.stdout = LIST_SAMPLE if "list" in cmd else CHECK_SAMPLE
+            return result
+
+        with patch("duplicacy_exporter.subprocess.run", side_effect=fake_run):
+            with patch("duplicacy_exporter.time.sleep",
+                       side_effect=KeyboardInterrupt("stop")):
+                with pytest.raises(KeyboardInterrupt):
+                    poller.run_forever()
+
+
+# =========================================================================
+# _load_poller_repositories (v0.5.0)
+# =========================================================================
+
+class TestLoadPollerRepositories:
+    def test_empty_env(self):
+        with patch.dict("os.environ", {}, clear=True):
+            assert _load_poller_repositories() == []
+
+    def test_valid_json_list(self):
+        env = {"POLLER_REPOSITORIES": '[{"path": "/repo", "storage": "wt"}]'}
+        with patch.dict("os.environ", env, clear=False):
+            assert _load_poller_repositories() == [{"path": "/repo", "storage": "wt"}]
+
+    def test_invalid_json(self):
+        env = {"POLLER_REPOSITORIES": "not-json{"}
+        with patch.dict("os.environ", env, clear=False):
+            assert _load_poller_repositories() == []
+
+    def test_non_list_json(self):
+        env = {"POLLER_REPOSITORIES": '{"path": "/repo"}'}
+        with patch.dict("os.environ", env, clear=False):
+            assert _load_poller_repositories() == []
+
+
+# =========================================================================
+# main() wires the poller only when enabled (v0.5.0)
+# =========================================================================
+
+class TestMainPoller:
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.MODE", "webhook")
+    @patch("duplicacy_exporter.LISTEN_PORT", 0)
+    @patch("duplicacy_exporter.POLLER_ENABLED", True)
+    def test_main_starts_poller_when_enabled(self):
+        import duplicacy_exporter
+        server_mock = MagicMock()
+        server_mock.serve_forever.side_effect = KeyboardInterrupt()
+        with patch.object(duplicacy_exporter, "HTTPServer", return_value=server_mock):
+            with patch.object(duplicacy_exporter, "_load_poller_repositories",
+                              return_value=[{"path": "/repo", "storage": "wt"}]):
+                with patch("threading.Thread") as thread_mock:
+                    thread_instance = MagicMock()
+                    thread_mock.return_value = thread_instance
+                    duplicacy_exporter.main()
+                    thread_instance.start.assert_called_once()
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.MODE", "webhook")
+    @patch("duplicacy_exporter.LISTEN_PORT", 0)
+    @patch("duplicacy_exporter.POLLER_ENABLED", True)
+    def test_main_warns_when_poller_enabled_but_no_repos(self):
+        import duplicacy_exporter
+        server_mock = MagicMock()
+        server_mock.serve_forever.side_effect = KeyboardInterrupt()
+        with patch.object(duplicacy_exporter, "HTTPServer", return_value=server_mock):
+            with patch.object(duplicacy_exporter, "_load_poller_repositories",
+                              return_value=[]):
+                with patch.object(duplicacy_exporter.logger, "warning") as warn:
+                    duplicacy_exporter.main()
+                    assert any(
+                        "POLLER_ENABLED is set but" in str(c.args[0])
+                        for c in warn.call_args_list
+                    )
+
+    @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
+    @patch("duplicacy_exporter.MODE", "webhook")
+    @patch("duplicacy_exporter.LISTEN_PORT", 0)
+    @patch("duplicacy_exporter.POLLER_ENABLED", False)
+    def test_main_does_not_start_poller_when_disabled(self):
+        """Default (disabled): the poller loader is never even consulted."""
+        import duplicacy_exporter
+        server_mock = MagicMock()
+        server_mock.serve_forever.side_effect = KeyboardInterrupt()
+        with patch.object(duplicacy_exporter, "HTTPServer", return_value=server_mock):
+            with patch.object(duplicacy_exporter, "_load_poller_repositories") as loader:
+                duplicacy_exporter.main()
+                loader.assert_not_called()
