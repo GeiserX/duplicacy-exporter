@@ -1,6 +1,6 @@
 # --- Stage 1: fetch the duplicacy CLI binary (only used by the optional poller) ---
 # The exporter runs fine without it; the binary just enables POLLER_ENABLED mode.
-FROM alpine:3.21 AS duplicacy
+FROM alpine:3.24 AS duplicacy
 
 ARG DUPLICACY_VERSION=3.2.5
 ARG TARGETARCH
