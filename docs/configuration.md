@@ -11,7 +11,7 @@ All configuration is done through environment variables:
 | `WEBHOOK_PATH` | `/webhook` | Path for the webhook POST endpoint (webhook mode) |
 | `MACHINE_NAME` | _(empty)_ | Machine name label. In `log_tail` mode it must be set (or learned from a `DUPLICACY_META` / notification line) before backup metrics are emitted. |
 | `SNAPSHOT_ID` | _(empty)_ | Snapshot id for `log_tail` users whose logs have no section headers / `DUPLICACY_META` (e.g. stock `duplicacy backup`). Lets post-run summary metrics resolve. |
-| `TAILSCALE_DOMAIN` | `mango-alpha.ts.net` | Tailscale domain suffix to strip from storage URLs |
+| `TAILSCALE_DOMAIN` | _(empty)_ | Tailscale domain suffix to strip from storage URLs (e.g. `example.ts.net`). Without it, a hostname with dots is shortened to its first label. |
 | `STORAGE_HOST_MAP` | _(empty)_ | JSON object mapping hostname/IP to display name |
 | `REPLAY_HOURS` | `25` | Hours of Docker log history to replay on startup |
 | `TIMESTAMP_FILE` | `/data/duplicacy_exporter_last_ts` | File to persist last-seen log timestamp (avoids counter double-count on restart). Co-located with `STATE_FILE` under `/data` so one volume persists both. |
@@ -31,7 +31,7 @@ All configuration is done through environment variables:
 Map raw IPs or hostnames to friendly names:
 
 ```bash
-STORAGE_HOST_MAP='{"192.168.10.100":"watchtower","192.168.20.5":"geiserct"}'
+STORAGE_HOST_MAP='{"192.168.1.10":"nas","10.0.0.5":"offsite"}'
 ```
 
 ## Persistence across restarts

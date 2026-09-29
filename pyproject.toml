@@ -7,7 +7,7 @@ name = "duplicacy-exporter"
 version = "0.6.0"
 description = "Prometheus exporter for Duplicacy backup metrics -- real-time progress, speed, and post-run summaries"
 readme = "README.md"
-license = "GPL-3.0-only"
+license = "GPL-3.0-or-later"
 requires-python = ">=3.10"
 authors = [
     { name = "GeiserX", email = "9169332+GeiserX@users.noreply.github.com" },

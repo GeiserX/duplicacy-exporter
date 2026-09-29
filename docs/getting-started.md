@@ -1,4 +1,8 @@
-# Installation
+# Getting started
+
+The exporter runs as a Docker container, `drumsergio/duplicacy-exporter` for amd64 and arm64, or as a
+Python package from PyPI. Pick the mode that matches how you run Duplicacy: `log_tail` for the CLI, `webhook` for
+the Web UI. Every setting is on [Configuration](configuration.md).
 
 ## Docker Compose -- Log Tail Mode (recommended for CLI)
 
@@ -61,3 +65,25 @@ services:
     ports:
       - "9750:9750"
 ```
+
+## Without Docker (PyPI)
+
+```bash
+pipx install duplicacy-exporter
+MODE=webhook STATE_FILE=$HOME/.duplicacy-exporter/state.json duplicacy-exporter
+```
+
+The console script reads the same environment variables as the image. The default state path is
+`/data/...`, which is not writable outside the container, so point `STATE_FILE` and `TIMESTAMP_FILE`
+somewhere you own, or set `PERSIST_ENABLED=false`.
+
+## Check that it works
+
+```bash
+curl -s http://localhost:9750/health
+curl -s http://localhost:9750/metrics | grep duplicacy_exporter_info
+```
+
+`/health` answers `OK`, and `/metrics` shows `duplicacy_exporter_info{mode="webhook",version="0.6.0"} 1.0`
+with your mode in the label. Backup series appear after the first backup reports; [Usage](usage.md) shows what to
+look at while a backup runs and after it ends.

@@ -38,6 +38,6 @@ groups:
 
 ## Grafana dashboard
 
-A ready-to-import dashboard is included in [`dashboard.json`](../dashboard.json) and published on [Grafana.com (#25089)](https://grafana.com/grafana/dashboards/25089).
+A ready-to-import dashboard is included in [`dashboard.json`](https://github.com/GeiserX/duplicacy-exporter/blob/main/dashboard.json) and published on [Grafana.com (#25089)](https://grafana.com/grafana/dashboards/25089).
 
 Import it in Grafana via **Dashboards → Import → Upload JSON file** or use the dashboard ID `25089`.

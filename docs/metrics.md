@@ -1,4 +1,4 @@
-# Metrics and endpoints
+# Metrics
 
 All backup metrics carry labels: `snapshot_id`, `storage_target`, `machine`.
 All prune metrics carry labels: `storage_target`, `machine`.
@@ -67,10 +67,4 @@ Storage metrics carry labels `storage_target`, `machine`; snapshot metrics carry
 | `duplicacy_poller_last_success_timestamp_seconds` | Gauge | Unix timestamp of the last fully successful poller cycle |
 | `duplicacy_poller_errors_total` | Counter | Poller errors (missing binary, timeout, or parse failure) across all cycles |
 
-## Endpoints
-
-| Path | Method | Description |
-|------|--------|-------------|
-| `/metrics` | GET | Prometheus metrics endpoint |
-| `/webhook` | POST | Duplicacy Web UI report endpoint |
-| `/health` | GET | Health check (returns `200 OK`) |
+The HTTP endpoints (`/metrics`, `/webhook`, `/health`) are on [Usage](usage.md#endpoints).

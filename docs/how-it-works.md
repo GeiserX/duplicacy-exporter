@@ -1,4 +1,4 @@
-# Architecture
+# How it works
 
 <p>
   <a href="https://grafana.com/grafana/dashboards/25089"><img src="https://img.shields.io/badge/Grafana-Dashboard%2025089-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana Dashboard"></a>
