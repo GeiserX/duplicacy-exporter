@@ -33,20 +33,22 @@ It works with **Duplicacy CLI** (by tailing logs) and **Duplicacy Web UI** (by w
 docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=webhook drumsergio/duplicacy-exporter:0.6.0
 ```
 
-Then set `report_url` in Duplicacy Web UI to `http://duplicacy-exporter:9750/webhook` and scrape `:9750/metrics`. Without Docker: `pipx install duplicacy-exporter`, then run `duplicacy-exporter`. For the CLI (`log_tail`) and log-file setups, see [Getting started](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/getting-started.md).
+Then set `report_url` in Duplicacy Web UI to `http://duplicacy-exporter:9750/webhook` and scrape `:9750/metrics`. Without Docker: `pipx install duplicacy-exporter`, then run `duplicacy-exporter`. For the CLI (`log_tail`) and log-file setups, see [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/).
 
 ## Documentation
 
-- [Getting started](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/getting-started.md): Docker Compose for log tail, webhook and log file modes, PyPI, first check
-- [Configuration](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/configuration.md): environment variables, storage host mapping, persistence
-- [Usage](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/usage.md): endpoints, reading a running and a finished backup
-- [Metrics](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/metrics.md): every series and its labels
-- [Webhook payload](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/webhook.md): the Web UI report fields
-- [Storage poller](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/storage-poller.md): storage size and revision counts
-- [Prometheus and Grafana](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/prometheus-grafana.md): scrape config, alert rules, dashboard
-- [How it works](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/how-it-works.md): how the two modes collect data
-- [Troubleshooting](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/troubleshooting.md)
-- [Related projects](https://github.com/GeiserX/duplicacy-exporter/blob/main/docs/related.md)
+The full documentation lives at **[geiserx.github.io/duplicacy-exporter](https://geiserx.github.io/duplicacy-exporter/)**.
+
+- [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/): Docker Compose for log tail, webhook and log file modes, PyPI, first check
+- [Configuration](https://geiserx.github.io/duplicacy-exporter/configuration/): environment variables, storage host mapping, persistence
+- [Usage](https://geiserx.github.io/duplicacy-exporter/usage/): endpoints, reading a running and a finished backup
+- [Metrics](https://geiserx.github.io/duplicacy-exporter/metrics/): every series and its labels
+- [Webhook payload](https://geiserx.github.io/duplicacy-exporter/webhook/): the Web UI report fields
+- [Storage poller](https://geiserx.github.io/duplicacy-exporter/storage-poller/): storage size and revision counts
+- [Prometheus and Grafana](https://geiserx.github.io/duplicacy-exporter/prometheus-grafana/): scrape config, alert rules, dashboard
+- [How it works](https://geiserx.github.io/duplicacy-exporter/how-it-works/): how the two modes collect data
+- [Troubleshooting](https://geiserx.github.io/duplicacy-exporter/troubleshooting/)
+- [Related projects](https://geiserx.github.io/duplicacy-exporter/related/)
 
 ## License
 
