@@ -89,10 +89,10 @@ class TestLoadStorageHostMap:
             assert _load_storage_host_map() == {}
 
     def test_valid_json(self):
-        env = {"STORAGE_HOST_MAP": '{"192.168.10.100": "watchtower"}'}
+        env = {"STORAGE_HOST_MAP": '{"192.168.1.10": "nas"}'}
         with patch.dict("os.environ", env, clear=False):
             result = _load_storage_host_map()
-            assert result == {"192.168.10.100": "watchtower"}
+            assert result == {"192.168.1.10": "nas"}
 
     def test_invalid_json(self):
         env = {"STORAGE_HOST_MAP": "not-json{"}
@@ -106,44 +106,44 @@ class TestLoadStorageHostMap:
 # =========================================================================
 
 class TestExtractStorageTarget:
-    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
     @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
     def test_tailscale_fqdn(self):
-        url = "minio://garage@watchtower.mango-alpha.ts.net:9000/bucket"
-        assert _extract_storage_target(url) == "watchtower"
+        url = "minio://garage@nas.example.ts.net:9000/bucket"
+        assert _extract_storage_target(url) == "nas"
 
-    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "mango-alpha.ts.net")
-    @patch("duplicacy_exporter._STORAGE_HOST_MAP", {"192.168.10.100": "watchtower"})
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
+    @patch("duplicacy_exporter._STORAGE_HOST_MAP", {"192.168.1.10": "nas"})
     def test_ip_via_host_map(self):
-        url = "minio://garage@192.168.10.100:9000/bucket"
-        assert _extract_storage_target(url) == "watchtower"
+        url = "minio://garage@192.168.1.10:9000/bucket"
+        assert _extract_storage_target(url) == "nas"
 
-    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
     @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
     def test_sftp_url(self):
-        url = "sftp://user@geiserct.mango-alpha.ts.net/path"
-        assert _extract_storage_target(url) == "geiserct"
+        url = "sftp://user@offsite.example.ts.net/path"
+        assert _extract_storage_target(url) == "offsite"
 
-    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
     @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
     def test_generic_hostname(self):
         url = "sftp://user@myserver.example.com/path"
         assert _extract_storage_target(url) == "myserver"
 
-    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
     @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
     def test_no_match_returns_url(self):
         url = "localpath"
         assert _extract_storage_target(url) == "localpath"
 
-    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
     @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
     def test_bare_ip_no_host_map(self):
         """IP address with no host map entry returns the IP as-is."""
         url = "minio://garage@192.168.10.50:9000/bucket"
         assert _extract_storage_target(url) == "192.168.10.50"
 
-    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
     @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
     def test_url_without_at_sign(self):
         """URL with :// but no @ should still extract host."""
@@ -278,10 +278,10 @@ class TestRegexPatterns:
         assert m.group("eta") == "01:00:00"
 
     def test_storage_set(self):
-        line = "Storage set to minio://garage@watchtower.mango-alpha.ts.net:9000/backup"
+        line = "Storage set to minio://garage@nas.example.ts.net:9000/backup"
         m = RE_STORAGE_SET.search(line)
         assert m is not None
-        assert "watchtower" in m.group("storage_url")
+        assert "nas" in m.group("storage_url")
 
     def test_backup_end(self):
         line = "Backup for /data at revision 142 completed"
@@ -372,14 +372,14 @@ class TestBackupState:
         state = BackupState()
         state.current_snapshot = "appdata"
         state.in_backup = True
-        state.process_line("Storage set to sftp://user@myhost.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@myhost.example.ts.net/backups")
         assert state.current_storage_target == "myhost"
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_backup_failure_detection(self):
         state = BackupState()
         state.current_snapshot = "appdata"
-        state.current_storage_target = "watchtower"
+        state.current_storage_target = "nas"
         state.in_backup = True
         state.process_line("Backup failed due to connection error")
         assert state.in_backup is False
@@ -388,7 +388,7 @@ class TestBackupState:
     def test_backup_failure_lowercase(self):
         state = BackupState()
         state.current_snapshot = "appdata"
-        state.current_storage_target = "watchtower"
+        state.current_storage_target = "nas"
         state.in_backup = True
         state.process_line("backup failed: some error")
         assert state.in_backup is False
@@ -396,7 +396,7 @@ class TestBackupState:
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_prune_completion(self):
         state = BackupState()
-        state.current_storage_target = "watchtower"
+        state.current_storage_target = "nas"
         state.in_prune = True
         state.process_line("All fossil collections have been removed")
         assert state.in_prune is False
@@ -404,7 +404,7 @@ class TestBackupState:
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_prune_no_snapshot(self):
         state = BackupState()
-        state.current_storage_target = "watchtower"
+        state.current_storage_target = "nas"
         state.in_prune = True
         state.process_line("No snapshot to delete")
         assert state.in_prune is False
@@ -412,7 +412,7 @@ class TestBackupState:
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_prune_nothing_to_prune(self):
         state = BackupState()
-        state.current_storage_target = "watchtower"
+        state.current_storage_target = "nas"
         state.in_prune = True
         state.process_line("Nothing to prune")
         assert state.in_prune is False
@@ -420,7 +420,7 @@ class TestBackupState:
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_prune_completed_pattern(self):
         state = BackupState()
-        state.current_storage_target = "watchtower"
+        state.current_storage_target = "nas"
         state.in_prune = True
         state.process_line("Prune completed")
         assert state.in_prune is False
@@ -521,9 +521,9 @@ class TestBackupState:
         """After backup section + storage set, backup_running should be 1."""
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to minio://garage@watchtower.mango-alpha.ts.net:9000/bucket")
-        assert state.current_storage_target == "watchtower"
-        labels = ("appdata", "watchtower", "testmachine")
+        state.process_line("Storage set to minio://garage@nas.example.ts.net:9000/bucket")
+        assert state.current_storage_target == "nas"
+        labels = ("appdata", "nas", "testmachine")
         assert backup_running.labels(*labels)._value.get() == 1.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
@@ -531,16 +531,16 @@ class TestBackupState:
         """After prune section + storage set, prune_running should be 1."""
         state = BackupState()
         state.process_line("--- Prune Primary ---")
-        state.process_line("Storage set to minio://garage@watchtower.mango-alpha.ts.net:9000/bucket")
-        assert state.current_storage_target == "watchtower"
-        labels = ("watchtower", "testmachine")
+        state.process_line("Storage set to minio://garage@nas.example.ts.net:9000/bucket")
+        assert state.current_storage_target == "nas"
+        labels = ("nas", "testmachine")
         assert prune_running.labels(*labels)._value.get() == 1.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
     def test_chunk_uploaded_updates_metrics(self):
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         state.process_line("Uploaded chunk 1 size 4194304, 15.2MB/s 00:05:30 25.0%")
         labels = ("appdata", "wt", "testmachine")
         assert backup_chunks_uploaded.labels(*labels)._value.get() == 1.0
@@ -551,7 +551,7 @@ class TestBackupState:
     def test_chunk_skipped_updates_metrics(self):
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         state.process_line("Skipped chunk 1 size 1048576, 0.0B/s 00:00:01 10.0%")
         labels = ("appdata", "wt", "testmachine")
         assert backup_chunks_skipped.labels(*labels)._value.get() == 1.0
@@ -580,7 +580,7 @@ class TestBackupState:
     def test_backup_end_sets_metrics(self):
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         state.process_line("Backup for /data at revision 42 completed")
         labels = ("appdata", "wt", "testmachine")
         assert backup_running.labels(*labels)._value.get() == 0.0
@@ -601,7 +601,7 @@ class TestBackupState:
     def test_stats_files_sets_metrics(self):
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         state.process_line("Files: 1,000 total, 5G bytes; 50 new, 200M bytes")
         labels = ("appdata", "wt", "testmachine")
         assert last_files_total.labels(*labels)._value.get() == 1000.0
@@ -619,7 +619,7 @@ class TestBackupState:
     def test_stats_chunks_sets_metrics(self):
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         state.process_line("All chunks: 500 total, 2G bytes; 10 new, 100M bytes, 50M bytes uploaded")
         labels = ("appdata", "wt", "testmachine")
         assert last_bytes_uploaded.labels(*labels)._value.get() == 50 * 1024 ** 2
@@ -636,7 +636,7 @@ class TestBackupState:
     def test_stats_time_sets_duration(self):
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         state.process_line("Total running time: 01:23:45")
         labels = ("appdata", "wt", "testmachine")
         expected = 1 * 3600 + 23 * 60 + 45
@@ -675,7 +675,7 @@ class TestBackupState:
     def test_prune_completion_sets_timestamp(self):
         state = BackupState()
         state.process_line("--- Prune Primary ---")
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         now = time.time()
         state.process_line("All fossil collections have been removed")
         labels = ("wt", "testmachine")
@@ -695,15 +695,15 @@ class TestBackupState:
     def test_notification_line_sets_machine(self):
         """Notification line with em-dash and bold markers sets machine/snapshot."""
         state = BackupState()
-        state.process_line("*watchtower* \u2014 _appdata_ backup completed")
-        assert state.machine == "watchtower"
+        state.process_line("*nas* \u2014 _appdata_ backup completed")
+        assert state.machine == "nas"
         assert state.current_snapshot == "appdata"
 
     @patch("duplicacy_exporter.MACHINE_NAME", "fixed")
     def test_notification_line_does_not_override_machine_name(self):
         """If MACHINE_NAME is set, notification should not override it."""
         state = BackupState()
-        state.process_line("*watchtower* \u2014 _appdata_ backup completed")
+        state.process_line("*nas* \u2014 _appdata_ backup completed")
         assert state.machine == "fixed"
 
     @patch("duplicacy_exporter.MACHINE_NAME", "")
@@ -712,7 +712,7 @@ class TestBackupState:
         state = BackupState()
         state.in_backup = True
         state.current_snapshot = "existing"
-        state.process_line("*watchtower* \u2014 _newsnap_ backup completed")
+        state.process_line("*nas* \u2014 _newsnap_ backup completed")
         assert state.current_snapshot == "existing"
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
@@ -721,7 +721,7 @@ class TestBackupState:
         state = BackupState()
         state.current_storage_target = "wt"
         state.in_prune = True
-        state.process_line("*watchtower* \u2014 _appdata_ backup completed")
+        state.process_line("*nas* \u2014 _appdata_ backup completed")
         assert state.in_prune is False
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
@@ -736,7 +736,7 @@ class TestBackupState:
         """Simulate a complete backup lifecycle."""
         state = BackupState()
         state.process_line("--- Backup -> Primary (appdata) ---")
-        state.process_line("Storage set to minio://garage@wt.mango-alpha.ts.net:9000/bucket")
+        state.process_line("Storage set to minio://garage@wt.example.ts.net:9000/bucket")
         state.process_line("Uploaded chunk 1 size 4194304, 10.0MB/s 00:10:00 50.0%")
         state.process_line("Uploaded chunk 2 size 4194304, 12.0MB/s 00:05:00 100.0%")
         state.process_line("Files: 500 total, 2G bytes; 10 new, 100M bytes")
@@ -851,7 +851,7 @@ class TestBackupState:
         state = BackupState()
         state.in_backup = False
         state.in_prune = False
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         assert state.current_storage_target == "wt"
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
@@ -873,8 +873,8 @@ class TestWebhookHandler:
         handler = WebhookHandler(state)
         payload = {
             "id": "appdata",
-            "storage": "sftp://user@wt.mango-alpha.ts.net/backups",
-            "computer": "watchtower",
+            "storage": "sftp://user@wt.example.ts.net/backups",
+            "computer": "nas",
             "result": "success",
             "start_time": 1000,
             "end_time": 1600,
@@ -885,7 +885,7 @@ class TestWebhookHandler:
             "new_file_size": 2097152,
         }
         handler.handle(payload)
-        labels = ("appdata", "wt", "watchtower")
+        labels = ("appdata", "wt", "nas")
         assert last_exit_code.labels(*labels)._value.get() == 0.0
         assert last_duration.labels(*labels)._value.get() == 600.0
         assert last_files_total.labels(*labels)._value.get() == 500.0
@@ -902,8 +902,8 @@ class TestWebhookHandler:
         handler = WebhookHandler(state)
         payload = {
             "id": "appdata",
-            "storage": "sftp://user@wt.mango-alpha.ts.net/backups",
-            "computer": "watchtower",
+            "storage": "sftp://user@wt.example.ts.net/backups",
+            "computer": "nas",
             "result": "failure",
             "start_time": 0,
             "end_time": 0,
@@ -914,7 +914,7 @@ class TestWebhookHandler:
             "new_file_size": 0,
         }
         handler.handle(payload)
-        labels = ("appdata", "wt", "watchtower")
+        labels = ("appdata", "wt", "nas")
         assert last_exit_code.labels(*labels)._value.get() == 1.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
@@ -925,13 +925,13 @@ class TestWebhookHandler:
         payload = {
             "id": "appdata",
             "storage": "",
-            "computer": "watchtower",
+            "computer": "nas",
             "result": "success",
             "start_time": 1000,
             "end_time": 1600,
         }
         handler.handle(payload)
-        labels = ("appdata", "unknown", "watchtower")
+        labels = ("appdata", "unknown", "nas")
         assert last_exit_code.labels(*labels)._value.get() == 0.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "testmachine")
@@ -942,14 +942,14 @@ class TestWebhookHandler:
         state = BackupState()
         handler = WebhookHandler(state)
         payload = {
-            "computer": "watchtower",
-            "storage_url": "sftp://user@host.mango-alpha.ts.net/path",
+            "computer": "nas",
+            "storage_url": "sftp://user@host.example.ts.net/path",
             "result": "success",
             "start_time": 1000,
             "end_time": 1600,
         }
         handler.handle(payload)
-        labels = ("watchtower:host", "host", "watchtower")
+        labels = ("nas:host", "host", "nas")
         assert last_exit_code.labels(*labels)._value.get() == 0.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "")
@@ -976,7 +976,7 @@ class TestWebhookHandler:
         handler = WebhookHandler(state)
         payload = {
             "id": "snap",
-            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "storage": "sftp://user@wt.example.ts.net/path",
             "computer": "wt",
             "result": "success",
             "start_time": 1000,
@@ -999,7 +999,7 @@ class TestWebhookHandler:
         handler = WebhookHandler(state)
         payload = {
             "id": "snap",
-            "storage": "sftp://user@unique1.mango-alpha.ts.net/path",
+            "storage": "sftp://user@unique1.example.ts.net/path",
             "computer": "wt",
             "result": "success",
             "start_time": 1000,
@@ -1164,7 +1164,7 @@ class TestTailLogFile:
 
         fake_lines = [
             "--- Backup -> Primary (appdata) ---\n",
-            "Storage set to sftp://user@wt.mango-alpha.ts.net/backups\n",
+            "Storage set to sftp://user@wt.example.ts.net/backups\n",
             "",  # readline returns empty string to trigger sleep
         ]
         line_idx = 0
@@ -1418,7 +1418,7 @@ class TestTailDockerLogsMocked:
         state = BackupState()
 
         line1 = b"2024-03-15T10:30:00.100000000Z --- Backup -> Primary (appdata) ---\n"
-        line2 = b"2024-03-15T10:30:01.200000000Z Storage set to sftp://user@wt.mango-alpha.ts.net/backups\n"
+        line2 = b"2024-03-15T10:30:01.200000000Z Storage set to sftp://user@wt.example.ts.net/backups\n"
         frames = _make_docker_frame(1, line1) + _make_docker_frame(1, line2)
 
         self._run_tail(state, "test-container", frames)
@@ -1569,7 +1569,7 @@ class TestWebhookDifferentiation:
         payload = {
             "computer": "mac-mini",
             "directory": "/Users/gchen/photos",
-            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "storage": "sftp://user@wt.example.ts.net/path",
             "result": "success",
             "start_time": 1000,
             "end_time": 1600,
@@ -1585,7 +1585,7 @@ class TestWebhookDifferentiation:
         handler = WebhookHandler(state)
         base = {
             "computer": "mac-mini",
-            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "storage": "sftp://user@wt.example.ts.net/path",
             "result": "success",
             "start_time": 1000,
             "end_time": 1600,
@@ -1603,7 +1603,7 @@ class TestWebhookDifferentiation:
         payload = {
             "id": "explicit",
             "directory": "/srv/ignored",
-            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "storage": "sftp://user@wt.example.ts.net/path",
             "computer": "mac-mini",
             "result": "success",
             "start_time": 0,
@@ -1619,7 +1619,7 @@ class TestWebhookDifferentiation:
         handler = WebhookHandler(state)
         payload = {
             "name": "byname",
-            "storage": "sftp://user@wt.mango-alpha.ts.net/path",
+            "storage": "sftp://user@wt.example.ts.net/path",
             "computer": "mac-mini",
             "result": "success",
             "start_time": 0,
@@ -1636,7 +1636,7 @@ class TestSnapshotIdEnv:
         """SNAPSHOT_ID env seeds current_snapshot so stock-CLI summaries resolve."""
         state = BackupState()
         assert state.current_snapshot == "envsnap"
-        state.process_line("Storage set to sftp://user@wt.mango-alpha.ts.net/backups")
+        state.process_line("Storage set to sftp://user@wt.example.ts.net/backups")
         state.process_line("Backup for /data at revision 7 completed")
         labels = ("envsnap", "wt", "testmachine")
         assert last_revision.labels(*labels)._value.get() == 7.0
@@ -1726,7 +1726,7 @@ class TestWebhookRealPayload:
         handler.handle(payload)
 
         # snapshot_id falls back to the directory basename ("photos").
-        labels = ("photos", "watchtower", "mac-mini")
+        labels = ("photos", "nas", "mac-mini")
         # The real field is upload_chunk_size (no "d"); the old code read
         # uploaded_chunk_size and always recorded 0. Assert it is non-zero now.
         assert last_bytes_uploaded.labels(*labels)._value.get() == 104857600.0
@@ -1744,7 +1744,7 @@ class TestWebhookRealPayload:
         payload = _load_webui_report()
         assert payload["result"] == "Success"
         handler.handle(payload)
-        labels = ("photos", "watchtower", "mac-mini")
+        labels = ("photos", "nas", "mac-mini")
         assert last_exit_code.labels(*labels)._value.get() == 0.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "")
@@ -1756,7 +1756,7 @@ class TestWebhookRealPayload:
         payload["result"] = "Error"
         payload["directory"] = "/Users/gchen/errored"
         handler.handle(payload)
-        labels = ("errored", "watchtower", "mac-mini")
+        labels = ("errored", "nas", "mac-mini")
         assert last_exit_code.labels(*labels)._value.get() == 1.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "")
@@ -1772,9 +1772,9 @@ class TestWebhookRealPayload:
         handler.handle(b)
 
         assert last_chunks_size.labels(
-            "alpha", "watchtower", "mac-mini")._value.get() == 5368709120.0
+            "alpha", "nas", "mac-mini")._value.get() == 5368709120.0
         assert last_chunks_size.labels(
-            "beta", "watchtower", "mac-mini")._value.get() == 5368709120.0
+            "beta", "nas", "mac-mini")._value.get() == 5368709120.0
 
     @patch("duplicacy_exporter.MACHINE_NAME", "")
     def test_missing_directory_warns(self):
@@ -1881,7 +1881,7 @@ class TestParseCheckStats:
 class TestStoragePoller:
     @patch("duplicacy_exporter.MACHINE_NAME", "pollhost")
     def test_successful_cycle_sets_metrics(self):
-        repo = {"path": "/repo/photos", "storage": "watchtower"}
+        repo = {"path": "/repo/photos", "storage": "nas"}
         poller = StoragePoller([repo], interval=1)
 
         def fake_run(cmd, **kwargs):
@@ -1897,10 +1897,10 @@ class TestStoragePoller:
         with patch("duplicacy_exporter.subprocess.run", side_effect=fake_run):
             poller.run_once()
 
-        assert storage_total_chunks.labels("watchtower", "pollhost")._value.get() == 1280.0
-        assert storage_total_size.labels("watchtower", "pollhost")._value.get() == float(5 * 1024 ** 3)
-        assert snapshot_revisions.labels("photos", "watchtower", "pollhost")._value.get() == 3.0
-        assert snapshot_last_revision.labels("photos", "watchtower", "pollhost")._value.get() == 5.0
+        assert storage_total_chunks.labels("nas", "pollhost")._value.get() == 1280.0
+        assert storage_total_size.labels("nas", "pollhost")._value.get() == float(5 * 1024 ** 3)
+        assert snapshot_revisions.labels("photos", "nas", "pollhost")._value.get() == 3.0
+        assert snapshot_last_revision.labels("photos", "nas", "pollhost")._value.get() == 5.0
         assert poller_last_success_ts._value.get() > 0
         assert poller_errors_total._value.get() == before_errors  # no errors
 

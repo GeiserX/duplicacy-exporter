@@ -56,7 +56,7 @@ MACHINE_NAME = os.getenv("MACHINE_NAME", "")
 # Explicit snapshot id for stock-CLI log_tail users whose logs carry no section
 # headers / DUPLICACY_META lines. Seeds BackupState so summary metrics resolve.
 SNAPSHOT_ID = os.getenv("SNAPSHOT_ID", "")
-TAILSCALE_DOMAIN = os.getenv("TAILSCALE_DOMAIN", "mango-alpha.ts.net")
+TAILSCALE_DOMAIN = os.getenv("TAILSCALE_DOMAIN", "")
 REPLAY_HOURS = int(os.getenv("REPLAY_HOURS", "25"))
 # Co-located with STATE_FILE under /data on purpose: the log_tail replay-skip
 # guard (this timestamp) and the restored cumulative counters must share the same
@@ -99,7 +99,7 @@ logger = logging.getLogger("duplicacy-exporter")
 def _load_storage_host_map() -> dict:
     """Parse STORAGE_HOST_MAP env var: JSON mapping hostname/IP -> display name.
 
-    Example: {"192.168.10.100": "watchtower", "192.168.20.5": "geiserct"}
+    Example: {"192.168.1.10": "nas", "10.0.0.5": "offsite"}
     """
     raw = os.getenv("STORAGE_HOST_MAP", "")
     if not raw:
@@ -151,9 +151,9 @@ def _get_first(payload: dict, *keys, default=0):
 def _extract_storage_target(url: str) -> str:
     """Derive a human-readable target name from a storage URL.
 
-    minio://garage@watchtower.mango-alpha.ts.net:9000/... -> watchtower
-    sftp://user@geiserct.mango-alpha.ts.net/...           -> geiserct
-    minio://garage@192.168.10.100:9000/...                -> (via STORAGE_HOST_MAP)
+    minio://garage@nas.example.ts.net:9000/... -> nas
+    sftp://user@offsite.example.ts.net/...     -> offsite
+    minio://garage@192.168.1.10:9000/...       -> (via STORAGE_HOST_MAP)
     """
     m = re.search(r"@([^:/]+)", url)
     if not m:
@@ -167,7 +167,7 @@ def _extract_storage_target(url: str) -> str:
         return _STORAGE_HOST_MAP[host]
 
     ts_suffix = f".{TAILSCALE_DOMAIN}"
-    if host.endswith(ts_suffix):
+    if TAILSCALE_DOMAIN and host.endswith(ts_suffix):
         return host[: -len(ts_suffix)]
 
     if "." in host and not host.replace(".", "").isdigit():

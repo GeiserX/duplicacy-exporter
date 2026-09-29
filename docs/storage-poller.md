@@ -12,7 +12,7 @@ Enable it with `POLLER_ENABLED=true` and a `POLLER_REPOSITORIES` JSON list:
 environment:
   - POLLER_ENABLED=true
   - POLLER_INTERVAL=86400          # once a day
-  - POLLER_REPOSITORIES=[{"path":"/repos/photos","storage":"watchtower","snapshot_id":"photos"}]
+  - POLLER_REPOSITORIES=[{"path":"/repos/photos","storage":"offsite","snapshot_id":"photos"}]
 volumes:
   - /srv/duplicacy/photos:/repos/photos   # an initialised duplicacy repository
 ```
