@@ -130,6 +130,14 @@ class TestExtractStorageTarget:
         url = "sftp://user@myserver.example.com/path"
         assert _extract_storage_target(url) == "myserver"
 
+    @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "")
+    @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
+    def test_empty_domain_shortens_to_first_label(self):
+        """With TAILSCALE_DOMAIN unset (the default), a MagicDNS name still
+        shortens to its first label, even written with a trailing dot."""
+        assert _extract_storage_target("minio://garage@nas.example.ts.net:9000/b") == "nas"
+        assert _extract_storage_target("sftp://user@nas.example.ts.net./path") == "nas"
+
     @patch("duplicacy_exporter.TAILSCALE_DOMAIN", "example.ts.net")
     @patch("duplicacy_exporter._STORAGE_HOST_MAP", {})
     def test_no_match_returns_url(self):

@@ -27,7 +27,9 @@ The Web UI webhook is sent only when a backup ends, so in `webhook` mode there a
 ## A finished backup
 
 When a backup ends, the `duplicacy_backup_last_*` series hold its summary: exit code, duration, file
-counts, bytes uploaded, revision, and `duplicacy_backup_last_success_timestamp_seconds`. These are the
+counts, bytes uploaded, and `duplicacy_backup_last_success_timestamp_seconds`. The revision number,
+`duplicacy_backup_last_revision`, comes only from `log_tail` mode, because the Web UI report does not
+carry it; webhook users get revision counts from the [storage poller](storage-poller.md). These are the
 values the exporter saves to `STATE_FILE`, so they survive a restart. A useful check in Prometheus:
 
 ```promql
