@@ -20,7 +20,7 @@ All configuration is done through environment variables:
 | `PERSIST_ENABLED` | `true` | Save the last completed backup/storage/prune values to disk and reload them on startup, so metrics survive a restart (see [Persistence](#persistence-across-restarts)). Set to `false` to opt out. |
 | `STATE_FILE` | `/data/duplicacy_exporter_state.json` | Where the durable metric state is stored. Mount a volume at its directory so state survives container re-creation, not just restarts. |
 | `PERSIST_INTERVAL` | `15` | Seconds between state snapshots. A snapshot is only written when a value actually changed. |
-| `POLLER_ENABLED` | `false` | Enable the optional [storage poller](storage-poller.md#storage-poller-optional). Truthy values: `1`, `true`, `yes`. Off by default. |
+| `POLLER_ENABLED` | `false` | Enable the optional [storage poller](storage-poller.md). Truthy values: `1`, `true`, `yes`. Off by default. |
 | `POLLER_INTERVAL` | `86400` | Seconds between storage poller cycles (default 24h) |
 | `POLLER_REPOSITORIES` | _(empty)_ | JSON list of repositories to poll. Each item: `{"path": "...", "storage": "...", "snapshot_id": "..."}` (`path` required; `storage` defaults to `default`; `snapshot_id` optional) |
 | `DUPLICACY_BIN` | `duplicacy` | Path to the duplicacy CLI binary used by the poller |

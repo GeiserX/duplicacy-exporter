@@ -1,5 +1,13 @@
 # Troubleshooting
 
+## Summaries appear but the gauge never moves
+
+Live progress needs a section header (`--- Backup -> Primary (<id>) ---`) to open a run; a plain
+`duplicacy backup` log has none, so chunk lines are ignored and only the post-run summary is recorded. Use
+[duplicacy-cli-cron](https://github.com/GeiserX/duplicacy-cli-cron), or wrap your job so it prints that line
+before `duplicacy backup` starts. The Web UI reports only when a backup ends, so `webhook` mode never has live
+values.
+
 ## Exporter starts but no metrics appear
 
 - **Log tail mode**: Verify the Docker socket is mounted (`/var/run/docker.sock:/var/run/docker.sock:ro`) and the `DOCKER_CONTAINER_NAME` matches your Duplicacy container exactly.

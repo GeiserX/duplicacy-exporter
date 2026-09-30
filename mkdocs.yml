@@ -1,33 +1,20 @@
-# mkdocs.yml for a GeiserX repo. Copy to the repo root, then:
-#   1. replace {{REPO}}, {{NAME}} and {{PITCH}};
-#   2. delete every nav line whose page the repo does not have (the strict
-#      build fails on a nav entry for a missing file, so a stale nav cannot
-#      deploy);
-#   3. copy templates/docs-theme.css to docs/stylesheets/theme.css and put the
-#      banner's two colours in it;
-#   4. write `mkdocs-material==9.7.7` to docs/requirements-docs.txt (exact pin; Material 9.7.x
-#      pins mkdocs<2 itself, and 9.7 is Material's last feature line).
-#   5. a docs site that lives under a product site (DeclaRenta) sets site_url to that
-#      subpath, e.g. https://declarenta.com/docs/, and builds into the product artifact.
-# The docs/ contract this file assumes is in new-repo/README-STANDARD.md.
 site_name: duplicacy-exporter
 site_url: https://geiserx.github.io/duplicacy-exporter/
-site_description: "Prometheus exporter for Duplicacy backup metrics: real-time progress, speed, and post-run summaries for your Grafana dashboards."
+site_description: "Prometheus exporter for Duplicacy backups: live progress and speed while a backup runs, and the summary when it ends, for Grafana and alerts."
 repo_url: https://github.com/GeiserX/duplicacy-exporter
 repo_name: GeiserX/duplicacy-exporter
 edit_uri: edit/main/docs/
 
 # A warning is a broken link, a missing page or a page nobody can reach. All of
-# them fail the build, locally and in CI, so nobody has to remember --strict.
+# them fail the build, locally and in CI.
 strict: true
 
 theme:
   name: material
-  language: en  # es for a Spanish repo: it changes the UI strings, not the content.
-  # Uncomment when the repo has them. Both live under docs/images/.
-  # logo: images/logo.svg
-  # favicon: images/icon.svg
-  # Dark first: the first palette entry is the default, and the banners are dark.
+  language: en
+  logo: images/logo.svg
+  favicon: images/icon.svg
+  # Dark first: the first palette entry is the default, and the banner is dark.
   palette:
     - scheme: slate
       primary: custom
@@ -54,18 +41,8 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
-# MkDocs reports most link problems as `info`, which --strict ignores. Every
-# line here promotes one of them to a warning so the build fails on it:
-#   nav.omitted_files   a Markdown file under docs/ that is in no nav entry and
-#                       not in exclude_docs (a page nobody can reach, published
-#                       at a public URL anyway);
-#   nav.not_found       a nav entry whose file does not exist;
-#   links.not_found     a relative link to a page or file that does not exist;
-#   links.anchors       a link to a heading that does not exist;
-#   links.absolute_links  a link written as /path/ (breaks under the /duplicacy-exporter/
-#                       prefix of the site);
-#   links.unrecognized_links  a relative link that leaves docs/ (../README.md).
-#                       Repo files are linked by absolute GitHub URL instead.
+# MkDocs reports most link problems as `info`, which --strict ignores. Each
+# line promotes one of them to a warning so the build fails on it.
 validation:
   nav:
     omitted_files: warn
@@ -79,8 +56,7 @@ validation:
 
 plugins:
   - search
-  # When a page is renamed (installation.md -> getting-started.md), keep the old URL alive:
-  # add `mkdocs-redirects==1.2.2` to docs/requirements-docs.txt and uncomment.
+  # Old page URLs keep working after a rename.
   - redirects:
       redirect_maps:
         installation.md: getting-started.md
@@ -100,10 +76,8 @@ markdown_extensions:
       anchor_linenums: true
   - pymdownx.inlinehilite
   # base_path includes the repository root, so a page can include a file that
-  # ships (docker-compose.yml, .env.example) word for word with
-  # `--8<-- "docker-compose.yml"`. A copied example drifts from the real file;
-  # an included one cannot. check_paths makes a missing include fail the build
-  # instead of rendering an empty block.
+  # ships (docker-compose.yml) word for word. check_paths makes a missing
+  # include fail the build instead of rendering an empty block.
   - pymdownx.snippets:
       base_path:
         - .
@@ -127,16 +101,15 @@ extra:
       link: https://github.com/GeiserX/duplicacy-exporter
     - icon: fontawesome/brands/docker
       link: https://hub.docker.com/r/drumsergio/duplicacy-exporter
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/duplicacy-exporter/
 
 extra_css:
   - stylesheets/theme.css
 
 # Files under docs/ that are not pages. MkDocs publishes every Markdown file in
-# docs/ whether or not it is in the nav, so anything that is not a page must be
-# listed here. The patterns follow the docs/ contract: a page is a lowercase
-# kebab-case .md file; anything with a capital letter (ROADMAP.md, CHANGELOG.md,
-# GOAL.md, DESIGN.md) is a repo-facing note, and design/, research/ and notes/
-# hold material read on GitHub. Add a line for any other per-repo note.
+# docs/ whether or not it is in the nav, so anything that is not a page is
+# listed here.
 exclude_docs: |
   [A-Z]*.md
   design/
@@ -144,19 +117,19 @@ exclude_docs: |
   notes/
   requirements-docs.txt
 
-# One entry per canonical page, in the contract's order. Delete the lines for
-# pages the repo does not have. A repo-specific page goes after the canonical
-# one it extends (a `Metrics` page after Usage, a `Security` page after
-# Configuration). The nav title must equal the page's H1.
 nav:
   - Home: index.md
-  - Getting started: getting-started.md
-  - Configuration: configuration.md
-  - Usage: usage.md
-  - Metrics: metrics.md
-  - Webhook payload: webhook.md
-  - Storage poller (optional): storage-poller.md
-  - Prometheus and Grafana: prometheus-grafana.md
-  - How it works: how-it-works.md
-  - Troubleshooting: troubleshooting.md
-  - Related projects: related.md
+  - Get started:
+      - Getting started: getting-started.md
+      - Usage: usage.md
+      - Prometheus and Grafana: prometheus-grafana.md
+  - Reference:
+      - Configuration: configuration.md
+      - Metrics: metrics.md
+      - Webhook payload: webhook.md
+      - Storage poller: storage-poller.md
+  - Help:
+      - How it works: how-it-works.md
+      - Troubleshooting: troubleshooting.md
+      - Related projects: related.md
+  - Development: development.md

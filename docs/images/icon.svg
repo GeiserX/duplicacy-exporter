@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="duplicacy-exporter">
+  <!-- Favicon: the logo.svg mark on the banner's dark plate, so it reads on a light browser tab. -->
+  <rect width="128" height="128" rx="28" fill="#12151C"/>
+  <g transform="translate(26 25) scale(0.72)">
+    <g fill="#3BB273">
+      <rect x="0"  y="96" width="22" height="12"/><rect x="0"  y="80" width="22" height="12"/><rect x="0"  y="64" width="22" height="12"/>
+      <rect x="28" y="96" width="22" height="12"/><rect x="28" y="80" width="22" height="12"/><rect x="28" y="64" width="22" height="12"/>
+      <rect x="56" y="96" width="22" height="12"/><rect x="56" y="80" width="22" height="12"/><rect x="56" y="64" width="22" height="12"/>
+      <rect x="84" y="96" width="22" height="12"/><rect x="84" y="80" width="22" height="12"/><rect x="84" y="64" width="22" height="12"/>
+    </g>
+    <g fill="#FFB547">
+      <rect x="0"  y="48" width="22" height="12"/>
+      <rect x="28" y="48" width="22" height="12"/><rect x="28" y="32" width="22" height="12"/>
+      <rect x="56" y="48" width="22" height="12"/><rect x="56" y="32" width="22" height="12"/><rect x="56" y="16" width="22" height="12"/>
+      <rect x="84" y="48" width="22" height="12"/><rect x="84" y="32" width="22" height="12"/>
+    </g>
+    <g fill="#E6522C">
+      <rect x="28" y="16" width="22" height="12"/>
+      <rect x="56" y="0"  width="22" height="12"/>
+    </g>
+  </g>
+</svg>

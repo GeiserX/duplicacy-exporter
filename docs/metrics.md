@@ -5,9 +5,10 @@ All prune metrics carry labels: `storage_target`, `machine`.
 
 Each distinct `(snapshot_id, storage_target)` is its own series (and its own device
 in [duplicacy-ha](https://github.com/GeiserX/duplicacy-ha)), so multiple backups are
-tracked independently. In `webhook` mode `snapshot_id` comes from the Web UI report's
-backup id, falling back to the source **directory** name — so two backups on one
-machine never collapse into one. In `log_tail` mode it comes from a
+tracked independently. In `webhook` mode `snapshot_id` is the last path component of the
+report's `directory`, so two backups on one machine stay apart
+unless their directories share a last component (`/a/data` and `/b/data` to the same
+storage share one series). In `log_tail` mode it comes from a
 `DUPLICACY_META snapshot_id=…` line, a `--- Backup -> … (id) ---` section header, or
 the `SNAPSHOT_ID` env var.
 
@@ -54,7 +55,7 @@ the `SNAPSHOT_ID` env var.
 
 ## Storage poller (optional, opt-in)
 
-Only populated when the [storage poller](storage-poller.md#storage-poller-optional) is enabled.
+Only populated when the [storage poller](storage-poller.md) is enabled.
 Storage metrics carry labels `storage_target`, `machine`; snapshot metrics carry
 `snapshot_id`, `storage_target`, `machine`.
 
