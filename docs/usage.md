@@ -24,6 +24,8 @@ backup runs:
 
 The Web UI webhook is sent only when a backup ends, so in `webhook` mode there are no live values.
 
+![The Real-Time Progress row of the dashboard during a backup: the gauge, the upload speed in megabytes per second and the chunks uploaded and skipped, all updated per chunk](images/screenshots/grafana-live-progress.png)
+
 ## A finished backup
 
 When a backup ends, the `duplicacy_backup_last_*` series hold its summary: exit code, duration, file

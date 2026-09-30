@@ -1,38 +1,57 @@
 # How it works
 
-<p>
-  <a href="https://grafana.com/grafana/dashboards/25089"><img src="https://img.shields.io/badge/Grafana-Dashboard%2025089-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana Dashboard"></a>
-  <img src="https://img.shields.io/badge/python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
-  <img src="https://img.shields.io/badge/image%20size-~30MB-green?style=flat-square" alt="Image Size">
-</p>
+The exporter has two inputs and one output. The output is `/metrics` on port 9750, which Prometheus scrapes.
+The inputs are a Duplicacy CLI log, parsed line by line, or the JSON report the Duplicacy Web UI posts to
+`report_url` when a backup ends.
 
-**duplicacy-exporter** bridges [Duplicacy](https://duplicacy.com) backups and [Prometheus](https://prometheus.io), giving you full observability over backup operations. It works with both **Duplicacy CLI** (via log tailing) and **Duplicacy Web UI** (via webhook), exposing metrics that Prometheus scrapes and Grafana visualizes.
-
-## Key capabilities
-
-- **Real-time metrics** -- backup speed (bytes/sec), progress (0-100%), chunks uploaded/skipped, updated per chunk
-- **Post-run summaries** -- duration, file counts, bytes uploaded, exit codes, revision numbers
-- **Prune tracking** -- monitors prune operations with completion timestamps
-- **Two collection modes** -- `log_tail` for CLI users, `webhook` for Web UI users
-- **Smart label resolution** -- automatic snapshot ID, storage target, and machine name detection from logs
-- **Storage host mapping** -- translates IPs and Tailscale FQDNs into human-readable names
-- **Lightweight** -- single Python file, one dependency (`prometheus_client`), Alpine image (~30 MB)
-
-## Collection modes
-
-```
-+---------------------+         +----------------------+         +------------+
-|                     |  logs   |                      | scrape  |            |
-|  Duplicacy CLI      +-------->+  duplicacy-exporter  +<--------+ Prometheus |
-|  (Docker / file)    |  tail   |                      |  :9750  |            |
-+---------------------+         +----------+-----------+         +------+-----+
-                                           |                            |
-+---------------------+  POST   |          |                            |
-|  Duplicacy Web UI   +-------->+  /webhook endpoint   |         +------v-----+
-|  (report_url)       |         |                      |         |  Grafana   |
-+---------------------+         +----------------------+         +------------+
+```mermaid
+flowchart LR
+    CLI[Duplicacy CLI<br/>log file or container logs] -->|log_tail: parse each line| EXP[duplicacy-exporter]
+    WEB[Duplicacy Web UI<br/>report_url] -->|webhook: one POST per backup| EXP
+    EXP -->|/metrics| PROM[Prometheus]
+    EXP --> STATE[(STATE_FILE)]
+    EXP -.->|poller, optional| STORE[(duplicacy list, check)]
 ```
 
-**Log tail mode** connects to the Docker Engine API over a Unix socket (or tails a log file) and parses Duplicacy output line-by-line. It extracts chunk-level progress in real time and summary statistics at completion.
+## Log tail mode
 
-**Webhook mode** receives JSON payloads from Duplicacy Web UI's `report_url` setting, extracting the same summary metrics without needing Docker socket access.
+`MODE=log_tail` reads either a file (`LOG_FILE`) or a container's log stream through the Docker socket
+(`DOCKER_CONTAINER_NAME`). The parser tracks one backup or prune at a time:
+
+1. A section header, `--- Backup -> Primary (<snapshot id>) ---` or `--- Prune Primary ---`, opens a run and
+   sets the snapshot id. `DUPLICACY_META snapshot_id=... machine=...` lines, written by
+   [duplicacy-cli-cron](https://github.com/GeiserX/duplicacy-cli-cron), set the labels directly.
+2. `Storage set to <url>` sets the storage target label (the host part of the URL, mapped through
+   `STORAGE_HOST_MAP` and `TAILSCALE_DOMAIN`) and turns `duplicacy_backup_running` on.
+3. Every `Uploaded chunk` or `Skipped chunk` line updates progress, speed and the chunk counters.
+4. `Backup for <path> at revision <n> completed` closes the run: exit code 0, revision, success timestamp.
+   The `Files:`, `All chunks:` and `Total running time:` lines that follow fill the summary series. A line
+   containing `Backup failed` closes it with exit code 1.
+5. In a prune section, `All fossil collections have been removed` (or `no snapshot to delete`, `nothing to
+   prune`) sets the prune success timestamp.
+
+A plain `duplicacy backup` log has no section header, so nothing opens a run: the summary lines still
+resolve when `SNAPSHOT_ID` and `MACHINE_NAME` are set, but the live series stay at zero.
+
+With the Docker socket, the exporter replays the last `REPLAY_HOURS` of log on start and remembers the last
+line's timestamp in `TIMESTAMP_FILE`, so a restart neither loses the last run nor counts it twice.
+
+## Webhook mode
+
+`MODE=webhook` accepts the Web UI's report on `WEBHOOK_PATH` (`/webhook`). The report is one flat JSON object
+sent only when a backup ends, so there are no live values. The snapshot id is the last path component of the
+report's `directory` (the report has no id field), the machine is `computer`, and the storage target is the
+host of `storage`. The fields are on [Webhook payload](webhook.md).
+
+## What is kept across restarts
+
+The last completed values (the `duplicacy_backup_last_*`, prune, poller and counter series) are written to
+`STATE_FILE` every `PERSIST_INTERVAL` seconds when they change, and restored before the first scrape after a
+restart. The live series (`running`, `progress`, `speed`, the chunk counters) are not, because they describe
+a run that is no longer in flight. See [Persistence across restarts](configuration.md#persistence-across-restarts).
+
+## The image
+
+`drumsergio/duplicacy-exporter` is `python:3.14-alpine` plus `prometheus_client` and the duplicacy CLI 3.2.5
+binary, which only the optional [storage poller](storage-poller.md) uses. It is about 39 MB compressed, for
+amd64 and arm64, and runs as root by default (the Docker socket needs it; set `user:` if you tail a file).

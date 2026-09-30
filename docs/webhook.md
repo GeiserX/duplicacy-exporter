@@ -22,6 +22,7 @@ prune, copy, or check). It carries these 26 fields:
 | `upload_chunk_size` | **Bytes actually uploaded** this run (note: no "d" — `upload`, not `uploaded`) |
 | `upload_file_chunk_size`, `upload_metadata_chunk_size` | Uploaded file / metadata chunk bytes |
 
-> **There is no `id`, `snapshot_id`, `revision`, `prune`, or storage-size field in
-> this payload.** The exporter differentiates backups by `directory`, and uses the
-> poller (below) for storage size and revision counts.
+!!! note "No id, revision, prune or storage-size field"
+    The report has no `id`, `snapshot_id` or `revision` field, and none for prune runs or storage size. The
+    exporter uses the last path component of `directory` as `snapshot_id`, so two backups on one machine never
+    collapse into one series. Revision counts and storage size come from the [storage poller](storage-poller.md).
