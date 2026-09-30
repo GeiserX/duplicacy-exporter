@@ -28,6 +28,7 @@
    #A66200 is the same hue at 4.8:1. */
 [data-md-color-scheme="default"] {
   --md-typeset-a-color:         #A66200;
+  --md-accent-fg-color:         #A66200;  /* hovered links too */
 }
 
 /* Fixed logo size so the meter mark does not crowd the site name. */

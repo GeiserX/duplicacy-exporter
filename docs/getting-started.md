@@ -62,6 +62,10 @@ Web UI. Every setting is on [Configuration](configuration.md).
       duplicacy-exporter-data:
     ```
 
+    `:ro` stops writes to the socket file, not calls to the Docker API: whoever controls the exporter can
+    drive the Docker daemon, and on a rootful daemon that means the host. If that is too much, use the
+    shared log file instead.
+
     On start it replays the last `REPLAY_HOURS` (25) of the container's log, so the last completed run shows
     at once.
 
@@ -91,6 +95,10 @@ Web UI. Every setting is on [Configuration](configuration.md).
 
 The `/data` volume holds the last completed values so they survive a restart and an image upgrade. See
 [Persistence across restarts](configuration.md#persistence-across-restarts).
+
+Port 9750 has no authentication, and `/webhook` accepts a report in every mode, so anyone who can reach
+the port can post fake backup results. Publish it only to a network you trust, for example
+`"127.0.0.1:9750:9750"` when Prometheus runs on the same host.
 
 ## Without Docker (PyPI)
 

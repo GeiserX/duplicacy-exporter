@@ -47,7 +47,7 @@ docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=log_tail \
 curl -s localhost:9750/health
 ```
 
-`curl` answers `OK`, backup series appear on `/metrics` after the first run ends, and live progress needs the `--- Backup -> Primary (<id>) ---` headers that [duplicacy-cli-cron](https://github.com/GeiserX/duplicacy-cli-cron) writes (a plain `duplicacy backup` log gives the summary only). For the Web UI, set `report_url` to `http://<address of this host>:9750/webhook`, because the Web UI container cannot resolve the exporter's container name unless both share a Docker network. Then add `:9750/metrics` to Prometheus and import dashboard `25089`; [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/) has the compose files, the PyPI install and the first check.
+`curl` answers `OK`, backup series appear on `/metrics` after the first run ends, and live progress needs the `--- Backup -> Primary (<id>) ---` headers that [duplicacy-cli-cron](https://github.com/GeiserX/duplicacy-cli-cron) writes (a plain `duplicacy backup` log gives the summary only). For the Web UI, set `report_url` to `http://<address of this host>:9750/webhook`, because the Web UI container cannot resolve the exporter's container name unless both share a Docker network. Port 9750 has no authentication and `/webhook` is open in every mode, so publish it only to a network you trust. Then add `:9750/metrics` to Prometheus and import dashboard `25089`; [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/) has the compose files, the PyPI install and the first check.
 
 ## Documentation
 

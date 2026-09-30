@@ -24,5 +24,6 @@ prune, copy, or check). It carries these 26 fields:
 
 !!! note "No id, revision, prune or storage-size field"
     The report has no `id`, `snapshot_id` or `revision` field, and none for prune runs or storage size. The
-    exporter uses the last path component of `directory` as `snapshot_id`, so two backups on one machine never
-    collapse into one series. Revision counts and storage size come from the [storage poller](storage-poller.md).
+    exporter uses the last path component of `directory` as `snapshot_id`, so two backups on one machine stay
+    apart unless their directories share a last component (`/a/data` and `/b/data` to the same storage share
+    one series). Revision counts and storage size come from the [storage poller](storage-poller.md).

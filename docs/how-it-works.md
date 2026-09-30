@@ -34,7 +34,9 @@ A plain `duplicacy backup` log has no section header, so nothing opens a run: th
 resolve when `SNAPSHOT_ID` and `MACHINE_NAME` are set, but the live series stay at zero.
 
 With the Docker socket, the exporter replays the last `REPLAY_HOURS` of log on start and remembers the last
-line's timestamp in `TIMESTAMP_FILE`, so a restart neither loses the last run nor counts it twice.
+line's timestamp in `TIMESTAMP_FILE`, so a restart does not count a run twice. A run that ended more than
+`REPLAY_HOURS` before the restart is outside the replay and is not read again; the saved summary of the last
+completed run still serves its values.
 
 ## Webhook mode
 

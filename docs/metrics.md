@@ -6,8 +6,9 @@ All prune metrics carry labels: `storage_target`, `machine`.
 Each distinct `(snapshot_id, storage_target)` is its own series (and its own device
 in [duplicacy-ha](https://github.com/GeiserX/duplicacy-ha)), so multiple backups are
 tracked independently. In `webhook` mode `snapshot_id` is the last path component of the
-report's `directory` — so two backups on one
-machine never collapse into one. In `log_tail` mode it comes from a
+report's `directory`, so two backups on one machine stay apart
+unless their directories share a last component (`/a/data` and `/b/data` to the same
+storage share one series). In `log_tail` mode it comes from a
 `DUPLICACY_META snapshot_id=…` line, a `--- Backup -> … (id) ---` section header, or
 the `SNAPSHOT_ID` env var.
 
