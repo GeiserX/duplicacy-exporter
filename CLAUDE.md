@@ -4,12 +4,10 @@
 Real-time Prometheus exporter for Duplicacy backups. Exposes live speed, progress, and completion metrics via two collection modes: log tailing (Docker socket or file) and webhook (Duplicacy Web UI).
 
 ## Tech Stack
-- Python 3.13
+- Python 3.10 or newer (image: python:3.14-alpine)
 - prometheus_client (single dependency)
-- Docker (Alpine-based, ~30 MB image)
+- Docker (Alpine-based, about 39 MB image)
 - pytest (test suite in `tests/`)
-- GitHub Actions CI
-- Codecov for coverage
 
 ## Development
 ```bash

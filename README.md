@@ -3,52 +3,66 @@
 </p>
 
 <p align="center">
-  <strong>Prometheus exporter for <a href="https://duplicacy.com">Duplicacy</a> backup metrics: real-time progress, speed, and post-run summaries for your Grafana dashboards.</strong>
-</p>
-
-<p align="center">
-  <a href="https://pypi.org/project/duplicacy-exporter/"><img src="https://img.shields.io/pypi/v/duplicacy-exporter?style=flat-square&logo=python&logoColor=white&label=PyPI" alt="PyPI"></a>
-  <a href="https://github.com/GeiserX/duplicacy-exporter/releases"><img src="https://img.shields.io/github/v/release/GeiserX/duplicacy-exporter?style=flat-square&color=E6522C" alt="GitHub Release"></a>
-  <a href="https://hub.docker.com/r/drumsergio/duplicacy-exporter"><img src="https://img.shields.io/docker/v/drumsergio/duplicacy-exporter?sort=semver&style=flat-square&logo=docker&label=Docker%20Hub" alt="Docker Hub"></a>
+  <a href="https://hub.docker.com/r/drumsergio/duplicacy-exporter"><img src="https://img.shields.io/docker/pulls/drumsergio/duplicacy-exporter?style=flat-square&logo=docker" alt="Docker Pulls"></a>
+  <a href="https://github.com/GeiserX/duplicacy-exporter/stargazers"><img src="https://img.shields.io/github/stars/GeiserX/duplicacy-exporter?style=flat-square&logo=github" alt="GitHub Stars"></a>
+  <a href="https://github.com/GeiserX/duplicacy-exporter/releases"><img src="https://img.shields.io/github/v/release/GeiserX/duplicacy-exporter?style=flat-square" alt="Release"></a>
   <a href="https://github.com/GeiserX/duplicacy-exporter/blob/main/LICENSE"><img src="https://img.shields.io/github/license/GeiserX/duplicacy-exporter?style=flat-square" alt="License"></a>
 </p>
 
-It works with **Duplicacy CLI** (by tailing logs) and **Duplicacy Web UI** (by webhook), and exposes metrics that [Prometheus](https://prometheus.io) scrapes and Grafana shows. It runs as a Docker container or a PyPI package.
+**duplicacy-exporter** is a Prometheus exporter for [Duplicacy](https://duplicacy.com) backups. It reads the CLI's log or receives the Web UI's report, and exposes progress and speed while a backup runs and the summary when it ends: duration, files, bytes uploaded, exit code and revision, per snapshot, storage and machine. Duplicacy on its own writes logs and sends email, so nothing tells you that last night's backup failed or that one has not run for three days; with the exporter, Prometheus alerts on both and the shipped Grafana dashboard shows every backup on every machine in one place.
+
+<p align="center"><img src="https://raw.githubusercontent.com/GeiserX/duplicacy-exporter/main/docs/images/screenshots/grafana-dashboard.png" alt="The shipped Grafana dashboard while a backup runs: status stats, a progress gauge at 64 percent, upload speed and chunk charts, and the summary of the previous run" width="900"></p>
 
 ## Features
 
-- Real-time backup speed, progress and chunks uploaded or skipped, updated per chunk.
-- Post-run summaries: duration, file counts, bytes uploaded, exit code, revision number.
-- Prune tracking with completion timestamps.
-- Two collection modes: `log_tail` for CLI users, `webhook` for Web UI users.
-- Detects snapshot ID, storage target and machine name from the logs, and maps IPs and Tailscale names to readable hosts.
-- Keeps the last completed values across restarts.
-- Optional storage poller for storage size and revision counts.
+- Watch a backup run: progress, upload speed and chunks uploaded or skipped move on every chunk line of a CLI log that carries section headers.
+- Know how every backup ended: duration, files, bytes uploaded, exit code and revision number, per snapshot, storage target and machine.
+- Alert on a failed or a stale backup with the two Prometheus rules in the docs.
+- Know when the last prune finished, from CLI logs.
+- Two inputs: `log_tail` for the CLI, from a log file or a container's logs, and `webhook` for the Web UI's `report_url`.
+- Readable labels: snapshot id, storage target and machine name come from the log, and IPs or Tailscale names map to names you choose.
+- Values survive a restart: the last completed run is saved to disk and served again on start, so dashboards and Home Assistant sensors never go blank on an upgrade.
+- Storage size and revision counts from an optional poller that runs the bundled duplicacy CLI.
 - A ready-made [Grafana dashboard (#25089)](https://grafana.com/grafana/dashboards/25089).
-- Single Python file, one dependency (`prometheus_client`), Alpine image of about 30 MB.
+- One Python file, one dependency, a 39 MB image for amd64 and arm64, or `pipx install duplicacy-exporter`.
 
 ## Quick start
 
+Pick the line for your Duplicacy, then check it.
+
 ```bash
-docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=webhook drumsergio/duplicacy-exporter:0.6.0
+# Duplicacy Web UI: receive the report it posts when a backup ends
+docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=webhook \
+  -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.0
 ```
 
-Then set `report_url` in Duplicacy Web UI to `http://duplicacy-exporter:9750/webhook` and scrape `:9750/metrics`. Without Docker: `pipx install duplicacy-exporter`, then run `duplicacy-exporter`. For the CLI (`log_tail`) and log-file setups, see [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/).
+```bash
+# Duplicacy CLI: tail the log your backup job writes
+docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=log_tail \
+  -e LOG_FILE=/logs/duplicacy.log -e MACHINE_NAME=$(hostname) -e SNAPSHOT_ID=my-snapshot \
+  -v /path/to/duplicacy/logs:/logs:ro -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.0
+```
+
+```bash
+curl -s localhost:9750/health
+```
+
+`curl` answers `OK`, backup series appear on `/metrics` after the first run ends, and live progress needs the `--- Backup -> Primary (<id>) ---` headers that [duplicacy-cli-cron](https://github.com/GeiserX/duplicacy-cli-cron) writes (a plain `duplicacy backup` log gives the summary only). For the Web UI, set `report_url` to `http://<address of this host>:9750/webhook`, because the Web UI container cannot resolve the exporter's container name unless both share a Docker network. Then add `:9750/metrics` to Prometheus and import dashboard `25089`; [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/) has the compose files, the PyPI install and the first check.
 
 ## Documentation
 
-The full documentation lives at **[geiserx.github.io/duplicacy-exporter](https://geiserx.github.io/duplicacy-exporter/)**.
+The full documentation is at [geiserx.github.io/duplicacy-exporter](https://geiserx.github.io/duplicacy-exporter/).
 
-- [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/): Docker Compose for log tail, webhook and log file modes, PyPI, first check
-- [Configuration](https://geiserx.github.io/duplicacy-exporter/configuration/): environment variables, storage host mapping, persistence
-- [Usage](https://geiserx.github.io/duplicacy-exporter/usage/): endpoints, reading a running and a finished backup
-- [Metrics](https://geiserx.github.io/duplicacy-exporter/metrics/): every series and its labels
-- [Webhook payload](https://geiserx.github.io/duplicacy-exporter/webhook/): the Web UI report fields
-- [Storage poller](https://geiserx.github.io/duplicacy-exporter/storage-poller/): storage size and revision counts
-- [Prometheus and Grafana](https://geiserx.github.io/duplicacy-exporter/prometheus-grafana/): scrape config, alert rules, dashboard
-- [How it works](https://geiserx.github.io/duplicacy-exporter/how-it-works/): how the two modes collect data
-- [Troubleshooting](https://geiserx.github.io/duplicacy-exporter/troubleshooting/)
-- [Related projects](https://geiserx.github.io/duplicacy-exporter/related/)
+- Get started: [Getting started](https://geiserx.github.io/duplicacy-exporter/getting-started/), [Usage](https://geiserx.github.io/duplicacy-exporter/usage/), [Prometheus and Grafana](https://geiserx.github.io/duplicacy-exporter/prometheus-grafana/)
+- Reference: [Configuration](https://geiserx.github.io/duplicacy-exporter/configuration/), [Metrics](https://geiserx.github.io/duplicacy-exporter/metrics/), [Webhook payload](https://geiserx.github.io/duplicacy-exporter/webhook/), [Storage poller](https://geiserx.github.io/duplicacy-exporter/storage-poller/)
+- Help: [How it works](https://geiserx.github.io/duplicacy-exporter/how-it-works/), [Troubleshooting](https://geiserx.github.io/duplicacy-exporter/troubleshooting/), [Related projects](https://geiserx.github.io/duplicacy-exporter/related/)
+- [Development](https://geiserx.github.io/duplicacy-exporter/development/): tests, docs build, release
+
+Open an [issue](https://github.com/GeiserX/duplicacy-exporter/issues) for bugs and questions, with the exporter's log at `LOG_LEVEL=DEBUG`. Report security problems through the [security policy](https://github.com/GeiserX/duplicacy-exporter/blob/main/SECURITY.md), never in a public issue.
+
+## Related projects
+
+[duplicacy-container](https://github.com/GeiserX/duplicacy-container) (image and Helm chart), [duplicacy-cli-cron](https://github.com/GeiserX/duplicacy-cli-cron) (scheduled CLI backups whose log this exporter reads), [duplicacy-ha](https://github.com/GeiserX/duplicacy-ha) (Home Assistant sensors from `/metrics`), [duplicacy-mcp](https://github.com/GeiserX/duplicacy-mcp) (MCP server).
 
 ## License
 
