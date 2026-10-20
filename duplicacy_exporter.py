@@ -1,5 +1,5 @@
 """
-Duplicacy Prometheus Exporter v0.6.0
+Duplicacy Prometheus Exporter v0.6.1
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 
@@ -40,7 +40,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
 # ---------------------------------------------------------------------------
 # Configuration
