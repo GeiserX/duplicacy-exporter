@@ -33,14 +33,14 @@ Pick the line for your Duplicacy, then check it.
 ```bash
 # Duplicacy Web UI: receive the report it posts when a backup ends
 docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=webhook \
-  -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.0
+  -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.1
 ```
 
 ```bash
 # Duplicacy CLI: tail the log your backup job writes
 docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=log_tail \
   -e LOG_FILE=/logs/duplicacy.log -e MACHINE_NAME=$(hostname) -e SNAPSHOT_ID=my-snapshot \
-  -v /path/to/duplicacy/logs:/logs:ro -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.0
+  -v /path/to/duplicacy/logs:/logs:ro -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.1
 ```
 
 ```bash

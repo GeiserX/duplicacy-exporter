@@ -16,7 +16,7 @@ Web UI. Every setting is on [Configuration](configuration.md).
     ```yaml
     services:
       duplicacy-exporter:
-        image: drumsergio/duplicacy-exporter:0.6.0
+        image: drumsergio/duplicacy-exporter:0.6.1
         container_name: duplicacy-exporter
         restart: unless-stopped
         environment:
@@ -45,7 +45,7 @@ Web UI. Every setting is on [Configuration](configuration.md).
     ```yaml
     services:
       duplicacy-exporter:
-        image: drumsergio/duplicacy-exporter:0.6.0
+        image: drumsergio/duplicacy-exporter:0.6.1
         container_name: duplicacy-exporter
         restart: unless-stopped
         environment:
@@ -74,7 +74,7 @@ Web UI. Every setting is on [Configuration](configuration.md).
     ```yaml
     services:
       duplicacy-exporter:
-        image: drumsergio/duplicacy-exporter:0.6.0
+        image: drumsergio/duplicacy-exporter:0.6.1
         container_name: duplicacy-exporter
         restart: unless-stopped
         environment:
@@ -118,7 +118,7 @@ curl -s http://localhost:9750/health
 curl -s http://localhost:9750/metrics | grep duplicacy_exporter_info
 ```
 
-`/health` answers `OK`, and `/metrics` shows `duplicacy_exporter_info{mode="webhook",version="0.6.0"} 1.0`
+`/health` answers `OK`, and `/metrics` shows `duplicacy_exporter_info{mode="webhook",version="0.6.1"} 1.0`
 with your mode in the label. Backup series appear after the first backup reports. In `log_tail` mode, if
 `duplicacy_exporter_backups_seen_total` climbs while no labelled series appears, the exporter saw a backup it
 could not label: set `SNAPSHOT_ID` and `MACHINE_NAME`. [Usage](usage.md) shows what to look at while a backup
