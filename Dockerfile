@@ -16,7 +16,7 @@ RUN apk add --no-cache ca-certificates wget && \
     chmod +x /usr/local/bin/duplicacy
 
 # --- Stage 2: the exporter image ---
-FROM python:3.14-alpine
+FROM python:3.15-alpine
 
 # Both packages: upgrading only ca-certificates-bundle leaves the old hashed
 # links in /etc/ssl/certs, which still trust the compromised eMudhra roots.
