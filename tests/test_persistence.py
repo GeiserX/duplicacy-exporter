@@ -187,16 +187,29 @@ def test_restore_bad_label_does_not_crash(tmp_path):
 # Write-failure handling
 # ---------------------------------------------------------------------------
 
-def test_save_failure_disables_persistence(tmp_path):
+def test_save_failure_is_retried_and_recovers(tmp_path, caplog):
     # Point the state file "inside" an existing file so makedirs() raises OSError.
     afile = tmp_path / "afile"
     afile.write_text("x")
     reg, metrics = _fresh()
     metrics["dx_gn"].set(1)
     p = MetricsPersistence(str(afile / "state.json"), reg, metrics)
-    assert p.save() is False
-    assert p._failed is True
-    assert p.save() is False  # stays disabled, never raises
+    with caplog.at_level("WARNING"):
+        assert p.save() is False
+        assert p.save() is False  # still failing, never raises
+    assert p._failing is True
+    assert sum("Cannot write metric state" in r.message for r in caplog.records) == 1
+
+    # The disk frees up (a full disk, 2026-10-28): the next cycle writes again
+    # instead of leaving the state file frozen at the old values.
+    afile.unlink()
+    afile.mkdir()
+    metrics["dx_gn"].set(2)
+    assert p.save() is True
+    assert p._failing is False
+    reg2, metrics2 = _fresh()
+    MetricsPersistence(str(afile / "state.json"), reg2, metrics2).restore()
+    assert metrics2["dx_gn"]._value.get() == 2
 
 
 def test_save_replace_failure_cleans_tmp(tmp_path, monkeypatch):
@@ -211,7 +224,7 @@ def test_save_replace_failure_cleans_tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(dx.os, "replace", _raise_oserror)
 
     assert p.save() is False
-    assert p._failed is True
+    assert p._failing is True
     # The temp file must have been removed by the finally block.
     assert [f for f in os.listdir(tmp_path) if f.endswith(".tmp")] == []
 
@@ -229,7 +242,7 @@ def test_run_forever_saves_then_exits(tmp_path, monkeypatch):
 
     def save_once():
         result = real_save()
-        p._failed = True  # let the loop run exactly one cycle, then stop
+        p._stopped = True  # let the loop run exactly one cycle, then stop
         return result
 
     p.save = save_once

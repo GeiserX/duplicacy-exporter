@@ -1,5 +1,5 @@
 """
-Duplicacy Prometheus Exporter v0.6.1
+Duplicacy Prometheus Exporter v0.6.2
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 
@@ -40,7 +40,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -400,9 +400,10 @@ class MetricsPersistence:
     (issue duplicacy-ha#12). This keeps the last values across restarts.
 
     ``save()`` writes only when the snapshot actually changed (cheap when idle)
-    and is atomic (temp file + ``os.replace``). Any I/O failure disables
-    persistence with a single actionable log line instead of crashing or
-    spamming -- e.g. when STATE_FILE's directory is not a writable volume.
+    and is atomic (temp file + ``os.replace``). An I/O failure logs one
+    actionable line and is retried on the next cycle, so a transient error
+    (a full disk) does not freeze the state file for the rest of the process
+    while the log_tail timestamp file keeps advancing. Never raises.
     """
 
     def __init__(self, path, registry, metrics, interval=PERSIST_INTERVAL):
@@ -411,7 +412,8 @@ class MetricsPersistence:
         self.metrics = metrics  # registry-name -> metric object
         self.interval = interval
         self._last_serialized = None
-        self._failed = False
+        self._failing = False  # inside a streak of failed writes
+        self._stopped = False  # ends run_forever (tests, shutdown)
         self._lock = threading.Lock()
 
     def snapshot(self) -> list:
@@ -433,8 +435,6 @@ class MetricsPersistence:
 
     def save(self) -> bool:
         """Atomically persist the snapshot if it changed. Never raises."""
-        if self._failed:
-            return False
         try:
             serialized = json.dumps(self.snapshot(), sort_keys=True)
             with self._lock:
@@ -454,12 +454,17 @@ class MetricsPersistence:
                         except OSError:
                             pass
                 self._last_serialized = serialized
+            if self._failing:
+                self._failing = False
+                logger.info("Metric persistence recovered: %s written again", self.path)
             return True
         except OSError as exc:
-            self._failed = True
-            logger.warning(
-                "Disabling metric persistence; cannot write %s (%s). Mount a "
-                "writable volume at its directory to enable.", self.path, exc)
+            if not self._failing:
+                self._failing = True
+                logger.warning(
+                    "Cannot write metric state %s (%s); retrying every %ds. If it "
+                    "keeps failing, mount a writable volume at its directory.",
+                    self.path, exc, self.interval)
             return False
 
     def restore(self) -> int:
@@ -506,7 +511,7 @@ class MetricsPersistence:
         """Background loop: persist changed state every ``interval`` seconds."""
         logger.info("Metric persistence active: %s (every %ds)",
                     self.path, self.interval)
-        while not self._failed:
+        while not self._stopped:
             time.sleep(self.interval)
             self.save()
 
@@ -1292,8 +1297,8 @@ def main():
             STATE_FILE, registry, PERSISTED_METRICS, PERSIST_INTERVAL)
         persistence.restore()
         persistence.save()  # write initial state + surface any write error early
-        if not persistence._failed:
-            threading.Thread(target=persistence.run_forever, daemon=True).start()
+        # Always run the loop: a failed write is retried, never given up on.
+        threading.Thread(target=persistence.run_forever, daemon=True).start()
 
     if MODE == "log_tail":
         if LOG_FILE:

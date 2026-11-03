@@ -1242,6 +1242,7 @@ class TestMain:
     @patch("duplicacy_exporter.MODE", "log_tail")
     @patch("duplicacy_exporter.LOG_FILE", "")
     @patch("duplicacy_exporter.LISTEN_PORT", 0)
+    @patch("duplicacy_exporter.PERSIST_ENABLED", False)  # count only the tailer/poller threads
     def test_main_log_tail_docker_mode(self):
         """main() in log_tail mode starts docker tailer thread."""
         import duplicacy_exporter
@@ -1261,6 +1262,7 @@ class TestMain:
     @patch("duplicacy_exporter.MODE", "log_tail")
     @patch("duplicacy_exporter.LOG_FILE", "/some/file.log")
     @patch("duplicacy_exporter.LISTEN_PORT", 0)
+    @patch("duplicacy_exporter.PERSIST_ENABLED", False)  # count only the tailer/poller threads
     def test_main_log_tail_file_mode(self):
         """main() in log_tail mode with LOG_FILE starts file tailer."""
         import duplicacy_exporter
@@ -2024,6 +2026,7 @@ class TestMainPoller:
     @patch("duplicacy_exporter.MODE", "webhook")
     @patch("duplicacy_exporter.LISTEN_PORT", 0)
     @patch("duplicacy_exporter.POLLER_ENABLED", True)
+    @patch("duplicacy_exporter.PERSIST_ENABLED", False)  # count only the tailer/poller threads
     def test_main_starts_poller_when_enabled(self):
         import duplicacy_exporter
         server_mock = MagicMock()
