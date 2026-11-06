@@ -36,7 +36,7 @@ python -m zensical build --clean --strict
 python -I .github/scripts/site-check.py site
 ```
 
-Pages are Markdown under `docs/` and the nav is in `zensical.toml`. The `Docs` workflow runs the last two commands on every pull request and deploys `main` to GitHub Pages. The strict build fails on a broken link or anchor; `site-check.py` fails on what the build lets through: a page left out of the nav, a nav entry for a missing file, a missing image, a link rooted at `/`.
+Pages are Markdown under `docs/` and the nav is in `zensical.toml`. The `Docs` workflow runs the last two commands on every pull request and deploys `main` to GitHub Pages. The strict build fails on a broken link or anchor; `site-check.py` fails on what the build lets through: a page left out of the nav, a nav entry for a missing file, a missing image, a link rooted at `/` that falls outside the site's `/duplicacy-exporter/` path.
 Screenshots are PNGs under `docs/images/screenshots/`, taken from a demo run with fake machine names.
 
 ## Release

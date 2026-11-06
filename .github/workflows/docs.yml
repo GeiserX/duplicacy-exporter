@@ -80,8 +80,8 @@ jobs:
         run: python -m zensical build --clean --strict
 
       # What the strict build does not check: a page in no nav entry, a nav
-      # entry for a missing file, a missing image, a /rooted link, a raw <title>
-      # in a page. Each one was proven to turn this step red (validate-zensical.sh).
+      # entry for a missing file, a missing image, a /rooted link outside the
+      # site's /duplicacy-exporter/ path, a raw <title> in a page. Each one was proven to turn this step red (validate-zensical.sh).
       - name: Check the built site
         run: python -I .github/scripts/site-check.py site
 
