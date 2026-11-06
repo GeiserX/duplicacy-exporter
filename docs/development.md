@@ -27,13 +27,16 @@ Add a test beside the code you change; a new log line shape gets a regex test wi
 
 ## Docs
 
+The site is built with [Zensical](https://zensical.org/) from `docs/` and `zensical.toml`:
+
 ```bash
 pip install -r docs/requirements-docs.txt
-mkdocs serve          # http://127.0.0.1:8000
-mkdocs build --strict # what CI runs; a broken link fails it
+python -m zensical serve                    # http://127.0.0.1:8000
+python -m zensical build --clean --strict
+python -I .github/scripts/site-check.py site
 ```
 
-Pages are Markdown under `docs/`, the nav is in `mkdocs.yml`, and every pull request runs the strict build.
+Pages are Markdown under `docs/` and the nav is in `zensical.toml`. The `Docs` workflow runs the last two commands on every pull request and deploys `main` to GitHub Pages. The strict build fails on a broken link or anchor; `site-check.py` fails on what the build lets through: a page left out of the nav, a nav entry for a missing file, a missing image, a link rooted at `/`.
 Screenshots are PNGs under `docs/images/screenshots/`, taken from a demo run with fake machine names.
 
 ## Release
