@@ -1,0 +1,25 @@
+--- Backup -> Primary (appdata) ---
+DUPLICACY_META snapshot_id=appdata machine=host1
+Storage set to minio://garage@s3.example.net:9000/duplicacy-host1/host1/appdata
+Last backup at revision 192 found
+Indexing /local_shares/appdata
+Parsing filter file /local_shares/appdata/.duplicacy/filters
+Loaded 1 include/exclude pattern(s)
+Skipped non-regular file app/docker-proxy/docker.sock
+Failed to open file for reading: open /local_shares/appdata/app/cache/f1: no such file or directory
+File app/docker-proxy/docker.sock cannot be opened
+File app/cache/f1 cannot be opened
+Backup for /local_shares/appdata at revision 193 completed
+Files: 1525520 total, 689,551M bytes; 58742 new, 42,059M bytes
+File chunks: 192350 total, 892,600M bytes; 3700 new, 19,500M bytes, 8,500M bytes uploaded
+Metadata chunks: 117 total, 57M bytes; 19 new, 93M bytes, 56M bytes uploaded
+All chunks: 192467 total, 892,657M bytes; 3719 new, 19,593M bytes, 8,556M bytes uploaded
+Total running time: 00:47:11
+238 files were not included due to access errors
+--- Backup -> Primary (system) ---
+DUPLICACY_META snapshot_id=system machine=host1
+Storage set to minio://garage@s3.example.net:9000/duplicacy-host1/host1/system
+Backup for /local_shares/system at revision 192 completed
+Files: 1 total, 1048,576K bytes; 0 new, 0 bytes
+All chunks: 1015 total, 1,024M bytes; 0 new, 0 bytes, 0 bytes uploaded
+Total running time: 00:00:01

@@ -27,3 +27,5 @@ prune, copy, or check). It carries these 26 fields:
     exporter uses the last path component of `directory` as `snapshot_id`, so two backups on one machine stay
     apart unless their directories share a last component (`/a/data` and `/b/data` to the same storage share
     one series). Revision counts and storage size come from the [storage poller](storage-poller.md).
+    The report also says nothing about files the backup could not read, so `duplicacy_backup_last_files_skipped`
+    and `duplicacy_backup_last_directories_skipped` exist only in the log modes.

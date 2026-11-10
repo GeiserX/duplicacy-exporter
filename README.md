@@ -17,7 +17,7 @@
 
 - Watch a backup run: progress, upload speed and chunks uploaded or skipped move on every chunk line of a CLI log that carries section headers.
 - Know how every backup ended: duration, files, bytes uploaded, exit code and revision number, per snapshot, storage target and machine.
-- Alert on a failed or a stale backup with the two Prometheus rules in the docs.
+- Alert on a failed or a stale backup, or on one that left files out: Duplicacy exits 0 when it cannot read some files, and the exporter counts them from the `files were not included due to access errors` line. The rules are in the docs.
 - Know when the last prune finished, from CLI logs.
 - Two inputs: `log_tail` for the CLI, from a log file or a container's logs, and `webhook` for the Web UI's `report_url`.
 - Readable labels: snapshot id, storage target and machine name come from the log, and IPs or Tailscale names map to names you choose.
@@ -33,14 +33,14 @@ Pick the line for your Duplicacy, then check it.
 ```bash
 # Duplicacy Web UI: receive the report it posts when a backup ends
 docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=webhook \
-  -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.2
+  -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.7.0
 ```
 
 ```bash
 # Duplicacy CLI: tail the log your backup job writes
 docker run -d --name duplicacy-exporter -p 9750:9750 -e MODE=log_tail \
   -e LOG_FILE=/logs/duplicacy.log -e MACHINE_NAME=$(hostname) -e SNAPSHOT_ID=my-snapshot \
-  -v /path/to/duplicacy/logs:/logs:ro -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.6.2
+  -v /path/to/duplicacy/logs:/logs:ro -v duplicacy-exporter-data:/data drumsergio/duplicacy-exporter:0.7.0
 ```
 
 ```bash

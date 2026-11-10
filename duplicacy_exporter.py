@@ -1,5 +1,5 @@
 """
-Duplicacy Prometheus Exporter v0.6.2
+Duplicacy Prometheus Exporter v0.7.0
 
 Exports real-time and summary backup metrics from Duplicacy CLI or Web UI.
 
@@ -40,7 +40,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-VERSION = "0.6.2"
+VERSION = "0.7.0"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -289,6 +289,17 @@ last_chunks_size = Gauge(
     "(compressed; NOT deduplicated across revisions)",
     BACKUP_LABELS, registry=registry,
 )
+last_files_skipped = Gauge(
+    "duplicacy_backup_last_files_skipped",
+    "Files left out of the last backup because they could not be read "
+    "(duplicacy: 'N files were not included due to access errors')",
+    BACKUP_LABELS, registry=registry,
+)
+last_directories_skipped = Gauge(
+    "duplicacy_backup_last_directories_skipped",
+    "Directories left out of the last backup because they could not be read",
+    BACKUP_LABELS, registry=registry,
+)
 
 # --- Storage poller metrics (only populated when the poller is enabled) ----
 STORAGE_LABELS = ["storage_target", "machine"]
@@ -379,6 +390,8 @@ PERSISTED_METRICS = {
     "duplicacy_backup_last_revision": last_revision,
     "duplicacy_backup_last_files_size_bytes": last_files_size,
     "duplicacy_backup_last_chunks_size_bytes": last_chunks_size,
+    "duplicacy_backup_last_files_skipped": last_files_skipped,
+    "duplicacy_backup_last_directories_skipped": last_directories_skipped,
     "duplicacy_backup_bytes_uploaded": total_bytes_uploaded,  # Counter -> *_total
     "duplicacy_storage_total_size_bytes": storage_total_size,
     "duplicacy_storage_total_chunks": storage_total_chunks,
@@ -543,6 +556,17 @@ RE_STATS_CHUNKS = re.compile(
     r"All chunks:\s*(?P<total>[\d,]+)\s*total,\s*(?P<total_bytes>[\d,.]+)(?P<total_unit>[KMG]?)\s*bytes;\s*"
     r"(?P<new>[\d,]+)\s*new,\s*(?P<new_bytes>[\d,.]+)(?P<new_unit>[KMG]?)\s*bytes,\s*"
     r"(?P<uploaded_bytes>[\d,.]+)(?P<uploaded_unit>[KMG]?)\s*bytes uploaded"
+)
+
+# Printed after the stats when a backup could not read some entries
+# (LOG_WARN BACKUP_SKIPPED in duplicacy_backupmanager.go), e.g.
+#   "238 files were not included due to access errors"
+#   "1 file was not included due to access errors"
+#   "1 directory and 1240 files were not included due to access errors"
+# The backup still exits 0, so this line is the only sign of the gap.
+RE_BACKUP_SKIPPED = re.compile(
+    r"(?:(?P<dirs>\d+) director(?:y|ies)(?: and )?)?"
+    r"(?:(?P<files>\d+) files?)? (?:was|were) not included due to access errors"
 )
 
 RE_STATS_TIME = re.compile(
@@ -795,8 +819,26 @@ class BackupState:
             last_success_ts.labels(*bl).set(self._log_time)
             last_exit_code.labels(*bl).set(0)
             last_revision.labels(*bl).set(revision)
+            # The "not included" line, if any, comes after this one; a backup
+            # without it skipped nothing.
+            last_files_skipped.labels(*bl).set(0)
+            last_directories_skipped.labels(*bl).set(0)
             self.in_backup = False
             logger.info("Backup completed: %s -> %s rev %d", bl[0], bl[1], revision)
+            return
+
+        # --- Entries left out (follows the completion line and the stats) ---
+        m = RE_BACKUP_SKIPPED.search(line)
+        if m and (m.group("files") or m.group("dirs")):
+            bl = self._backup_labels()
+            if not bl:
+                return
+            files = int(m.group("files") or 0)
+            dirs = int(m.group("dirs") or 0)
+            last_files_skipped.labels(*bl).set(files)
+            last_directories_skipped.labels(*bl).set(dirs)
+            logger.warning("Backup %s -> %s left out %d files and %d directories "
+                           "(access errors)", bl[0], bl[1], files, dirs)
             return
 
         # --- BACKUP_STATS Files ---

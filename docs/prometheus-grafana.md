@@ -34,6 +34,15 @@ groups:
           severity: critical
         annotations:
           summary: "No successful Duplicacy backup in 24h for {{ $labels.snapshot_id }}"
+
+      # Duplicacy exits 0 even when it could not read some files, so a backup
+      # with holes looks like a success unless you watch this count.
+      - alert: DuplicacyBackupSkippedFiles
+        expr: duplicacy_backup_last_files_skipped > 0 or duplicacy_backup_last_directories_skipped > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Duplicacy backup {{ $labels.snapshot_id }} left out {{ $value }} entries (access errors)"
 ```
 
 ## Grafana dashboard

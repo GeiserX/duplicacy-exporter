@@ -35,6 +35,8 @@ the `SNAPSHOT_ID` env var.
 | `duplicacy_backup_last_chunks_new` | Gauge | New chunks in last backup |
 | `duplicacy_backup_last_files_size_bytes` | Gauge | Total logical size of all files in the last backup snapshot (webhook: `total_file_size`) |
 | `duplicacy_backup_last_chunks_size_bytes` | Gauge | Total size of chunks referenced by the last backup, compressed and **not** deduplicated across revisions (webhook: `total_chunk_size`) |
+| `duplicacy_backup_last_files_skipped` | Gauge | Files the last backup left out because it could not read them (log line `N files were not included due to access errors`); 0 when the line is absent. Duplicacy still exits 0, so alert on this. Log modes only: the Web UI report carries no such field |
+| `duplicacy_backup_last_directories_skipped` | Gauge | Directories the last backup left out, with all their contents (same log line); 0 when absent. Log modes only |
 | `duplicacy_backup_last_exit_code` | Gauge | Exit code: 0 = success, 1 = failure |
 | `duplicacy_backup_last_revision` | Gauge | Revision number of last backup |
 | `duplicacy_backup_bytes_uploaded_total` | Counter | Cumulative bytes uploaded across all runs |

@@ -38,6 +38,7 @@ from duplicacy_exporter import (
     RE_STATS_FILES,
     RE_STATS_CHUNKS,
     RE_STATS_TIME,
+    RE_BACKUP_SKIPPED,
     RE_SECTION_HEADER,
     RE_META_LINE,
     registry,
@@ -55,6 +56,8 @@ from duplicacy_exporter import (
     last_chunks_new,
     last_files_size,
     last_chunks_size,
+    last_files_skipped,
+    last_directories_skipped,
     last_exit_code,
     last_revision,
     total_bytes_uploaded,
@@ -2071,3 +2074,73 @@ class TestMainPoller:
             with patch.object(duplicacy_exporter, "_load_poller_repositories") as loader:
                 duplicacy_exporter.main()
                 loader.assert_not_called()
+
+
+class TestBackupSkipped:
+    """A backup that leaves files out still exits 0; the summary line is the only signal."""
+
+    @pytest.mark.parametrize("line,dirs,files", [
+        ("238 files were not included due to access errors", None, "238"),
+        ("1 file was not included due to access errors", None, "1"),
+        ("1 directory and 1240 files were not included due to access errors", "1", "1240"),
+        ("2 directories were not included due to access errors", "2", None),
+        ("2026-11-10 00:47:16.859 WARN BACKUP_SKIPPED 3 files were not included due to access errors",
+         None, "3"),
+    ])
+    def test_regex_variants(self, line, dirs, files):
+        m = RE_BACKUP_SKIPPED.search(line)
+        assert m is not None
+        assert m.group("dirs") == dirs
+        assert m.group("files") == files
+
+    @pytest.mark.parametrize("line", [
+        "Skipped chunk 3 size 1024, 1.0KB/s 00:00:01 1.0%",
+        "Skipped non-regular file app/docker.sock",
+        "File app/cache/f1 cannot be opened",
+        "were not included due to access errors",
+    ])
+    def test_regex_ignores_other_lines(self, line):
+        m = RE_BACKUP_SKIPPED.search(line)
+        assert m is None or not (m.group("files") or m.group("dirs"))
+
+    def test_real_log_sets_count_and_next_backup_reads_zero(self):
+        state = BackupState()
+        for line in (FIXTURES / "backup_with_skips.log").read_text().splitlines():
+            state.process_line(line)
+        appdata = ("appdata", "s3", "host1")
+        system = ("system", "s3", "host1")
+        assert last_files_skipped.labels(*appdata)._value.get() == 238.0
+        assert last_directories_skipped.labels(*appdata)._value.get() == 0.0
+        assert last_exit_code.labels(*appdata)._value.get() == 0.0
+        assert last_files_skipped.labels(*system)._value.get() == 0.0
+        assert last_directories_skipped.labels(*system)._value.get() == 0.0
+
+    def test_clean_backup_resets_previous_count(self):
+        state = BackupState()
+        lines = [
+            "--- Backup -> Primary (home) ---",
+            "DUPLICACY_META snapshot_id=home machine=host2",
+            "Storage set to minio://garage@s3.example.net:9000/b/host2/home",
+            "Backup for /local_home at revision 194 completed",
+            "1 directory and 2 files were not included due to access errors",
+        ]
+        for line in lines:
+            state.process_line(line)
+        labels = ("home", "s3", "host2")
+        assert last_files_skipped.labels(*labels)._value.get() == 2.0
+        assert last_directories_skipped.labels(*labels)._value.get() == 1.0
+        for line in lines[:4]:
+            state.process_line(line.replace("194", "195"))
+        assert last_files_skipped.labels(*labels)._value.get() == 0.0
+        assert last_directories_skipped.labels(*labels)._value.get() == 0.0
+
+    def test_skipped_line_without_labels_ignored(self):
+        state = BackupState()
+        state.current_snapshot = ""
+        state.current_storage_target = ""
+        state.process_line("238 files were not included due to access errors")
+
+    def test_skipped_metrics_are_persisted(self):
+        from duplicacy_exporter import PERSISTED_METRICS
+        assert PERSISTED_METRICS["duplicacy_backup_last_files_skipped"] is last_files_skipped
+        assert PERSISTED_METRICS["duplicacy_backup_last_directories_skipped"] is last_directories_skipped
